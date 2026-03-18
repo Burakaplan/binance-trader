@@ -246,7 +246,7 @@ function EqChart({data,W=440,H=80}){
 
 const fp=v=>v>1000?v.toFixed(2):v>10?v.toFixed(3):v>1?v.toFixed(4):v.toFixed(6);
 const AC={AL:"#22c55e",SAT:"#ef4444",BEKLE:"#6b7280"};
-const Box=({ch,s={}})=><div style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:10,...s}}>{ch}</div>;
+const Box=({children,s={}})=><div style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:10,...s}}>{children}</div>;
 const Lbl=({t})=><div style={{fontSize:9,color:"#2a4070",marginBottom:6}}>{t}</div>;
 const Row=({l,v,c})=><div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:9}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c||"#94a3b8",fontWeight:700}}>{v}</span></div>;
 const StatCard=({l,v,c})=><div style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:6,padding:"6px 8px"}}><div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{v}</div></div>;
@@ -550,15 +550,15 @@ function App(){
                     <MiniCard key={l} l={l} v={v} c={c}/>
                   ))}
                 </div>
-                <Box ch={<div><Lbl t={"EQUİTY CURVESİ — "+focus.replace("USDT","")+" (7 GÜN)"}/><EqChart data={btResult.equity}/><div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4070",marginTop:4}}><span>7 gün önce: $10,000</span><span style={{color:btResult.finalVal>=10000?"#22c55e":"#ef4444"}}>Bugün: ${btResult.finalVal.toFixed(0)}</span></div></div>} s={{marginBottom:12}}/>
-                <Box ch={<div><Lbl t="SON BACKTEST İŞLEMLERİ"/>{btResult.trades.slice(-8).reverse().map((t,i)=>(
+                <Box s={{marginBottom:12}}><div><Lbl t={"EQUİTY CURVESİ — "+focus.replace("USDT","")+" (7 GÜN)"}/><EqChart data={btResult.equity}/><div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4070",marginTop:4}}><span>7 gün önce: $10,000</span><span style={{color:btResult.finalVal>=10000?"#22c55e":"#ef4444"}}>Bugün: ${btResult.finalVal.toFixed(0)}</span></div></div></Box>
+                <Box><div><Lbl t="SON BACKTEST İŞLEMLERİ"/>{btResult.trades.slice(-8).reverse().map((t,i)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:3,borderLeft:`2px solid ${t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444"}`}}>
                     <span style={{color:t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444",fontSize:10,fontWeight:700}}>{t.action==="AL"?"↑ AL":"↓ SAT"}</span>
                     <span style={{color:"#4a6fa5",fontSize:9}}>${fp(t.price)}</span>
                     {t.gain!=null&&<span style={{color:t.gain>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:9}}>{t.gain>=0?"+":""}${t.gain.toFixed(2)}</span>}
                     {t.reason&&<span style={{color:"#2a4070",fontSize:8}}>{t.reason}</span>}
                   </div>
-                ))}</div>}/>
+                ))}</div></Box>
                 <div style={{marginTop:10,fontSize:9,color:"#1a3060",padding:"6px 10px",background:"#050810",borderRadius:6}}>⚠️ Geçmiş performans gelecek sonuçları garanti etmez. Backtest spread/komisyon içermez.</div>
               </div>
         )}
@@ -585,7 +585,7 @@ function App(){
             </div>
 
             {/* MTF */}
-            <Box ch={<div>
+            <Box s={{marginBottom:12}}><div>
               <Lbl t="MULTI-TIMEFRAME ANALİZİ (1s / 4s / Günlük)"/>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
                 {[["1 Saatlik",M.h1,M.r1h],["4 Saatlik",M.h4,M.r4h],["Günlük",M.d1,M.r1d]].map(([tf,dir,r])=>{
@@ -603,10 +603,10 @@ function App(){
                   {M.align===0&&"Karışık — beklemek mantıklı"}
                 </div>
               </div>
-            </div>} s={{marginBottom:12}}/>
+            </div></Box>
 
             {/* Dinamik SL/TP */}
-            {DL&&<Box ch={<div>
+            {DL&&<Box><div>
               <Lbl t={"DİNAMİK SL/TP — ATR Bazlı (" + risk.toUpperCase() + " risk)"}/>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
                 {[["ATR(14)",DL.at>1?DL.at.toFixed(2):DL.at.toFixed(5),"#94a3b8"],["ATR %",DL.atPct.toFixed(2)+"%","#f59e0b"],["Volatilite",DL.atPct>3?"Yüksek":DL.atPct>1?"Normal":"Düşük",DL.atPct>3?"#ef4444":DL.atPct>1?"#f59e0b":"#22c55e"],["Stop-Loss","$"+fp(DL.sl)+" (−"+DL.slPct.toFixed(2)+"%)","#ef4444"],["Take-Profit","$"+fp(DL.tp)+" (+"+DL.tpPct.toFixed(2)+"%)","#22c55e"],["Risk/Ödül","1 : "+(DL.tpPct/DL.slPct).toFixed(1),"#38bdf8"]].map(([l,v,c])=>(
@@ -614,7 +614,7 @@ function App(){
                 ))}
               </div>
               <div style={{marginTop:8,fontSize:9,color:"#2a4070",padding:"5px 8px",background:"#050d20",borderRadius:4}}>💡 Bot yeni pozisyon açarken bu ATR bazlı seviyeleri otomatik kullanır.</div>
-            </div>}/>}
+            </div></Box>}
           </div>;
         })()}
 
@@ -644,7 +644,7 @@ function App(){
               </div>
 
               {/* Strateji */}
-              <Box ch={<div><Lbl t="AI SEÇİLEN STRATEJİ"/><div style={{color:"#38bdf8",fontWeight:700}}>🤖 {fSig.strat}</div><div style={{fontSize:9,color:"#2a4070",marginTop:3}}>{fHist.length} veri · Hacim + Divergence + Fibonacci aktif</div></div>} s={{marginBottom:10}}/>
+              <Box s={{marginBottom:10}}><div><Lbl t="AI SEÇİLEN STRATEJİ"/><div style={{color:"#38bdf8",fontWeight:700}}>🤖 {fSig.strat}</div><div style={{fontSize:9,color:"#2a4070",marginTop:3}}>{fHist.length} veri · Hacim + Divergence + Fibonacci aktif</div></div></Box>
 
               {/* Açık pozisyon */}
               {fPos&&<div style={{background:((fPos.qty*(fPrice.price||fPos.entry)-fPos.inv)>=0)?"#021008":"#120305",border:`1px solid ${((fPos.qty*(fPrice.price||fPos.entry)-fPos.inv)>=0)?"#22c55e33":"#ef444433"}`,borderRadius:8,padding:10,marginBottom:10}}>
@@ -659,13 +659,13 @@ function App(){
 
               {/* Göstergeler grid */}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                <Box ch={<div><Lbl t="RSI & STOCH RSI"/>{[[fSig.ind.r,"RSI(14)",35,65],[fSig.ind.sr.k,"StochRSI K",25,75]].map(([v,l,lo,hi])=>{const c=v<lo?"#22c55e":v>hi?"#ef4444":"#f59e0b";return <div key={l} style={{marginBottom:7}}><div style={{display:"flex",justifyContent:"space-between",fontSize:9,marginBottom:2}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c,fontWeight:700}}>{v.toFixed(1)}</span></div><div style={{background:"#0a1535",borderRadius:3,height:5}}><div style={{width:v+"%",height:"100%",background:c,borderRadius:3,transition:"width .3s"}}/></div></div>;})}</div>}/>
-                <Box ch={<div><Lbl t="MACD (12,26,9)"/><Row l="MACD" v={fSig.ind.m.line.toFixed(5)}/><Row l="Sinyal" v={fSig.ind.m.sig.toFixed(5)}/><Row l="Histogram" v={fSig.ind.m.hist.toFixed(5)} c={fSig.ind.m.hist>=0?"#22c55e":"#ef4444"}/></div>}/>
-                <Box ch={<div><Lbl t="BOLLINGER BANTLARI"/><Row l="Üst" v={"$"+fp(fSig.ind.b.u)} c="#ef4444"/><Row l="Orta" v={"$"+fp(fSig.ind.b.m)} c="#f59e0b"/><Row l="Alt" v={"$"+fp(fSig.ind.b.l)} c="#22c55e"/><div style={{fontSize:8,color:"#2a4070"}}>Genişlik: <span style={{color:fSig.ind.bw>4?"#ef4444":"#f59e0b"}}>{fSig.ind.bw.toFixed(2)}%</span></div></div>}/>
-                <Box ch={<div><Lbl t="EMA (9/21/50)"/><Row l="EMA 9" v={"$"+fp(fSig.ind.e9)} c="#38bdf8"/><Row l="EMA 21" v={"$"+fp(fSig.ind.e21)} c="#38bdf8"/><Row l="EMA 50" v={"$"+fp(fSig.ind.e50)} c="#38bdf8"/><div style={{fontSize:8,color:fSig.ind.slope>=0?"#22c55e":"#ef4444"}}>Eğim: {fSig.ind.slope>=0?"▲":"▼"}{Math.abs(fSig.ind.slope).toFixed(3)}%</div></div>}/>
+                <Box><div><Lbl t="RSI & STOCH RSI"/>{[[fSig.ind.r,"RSI(14)",35,65],[fSig.ind.sr.k,"StochRSI K",25,75]].map(([v,l,lo,hi])=>{const c=v<lo?"#22c55e":v>hi?"#ef4444":"#f59e0b";return <div key={l} style={{marginBottom:7}}><div style={{display:"flex",justifyContent:"space-between",fontSize:9,marginBottom:2}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c,fontWeight:700}}>{v.toFixed(1)}</span></div><div style={{background:"#0a1535",borderRadius:3,height:5}}><div style={{width:v+"%",height:"100%",background:c,borderRadius:3,transition:"width .3s"}}/></div></div>;})}</div></Box>
+                <Box><div><Lbl t="MACD (12,26,9)"/><Row l="MACD" v={fSig.ind.m.line.toFixed(5)}/><Row l="Sinyal" v={fSig.ind.m.sig.toFixed(5)}/><Row l="Histogram" v={fSig.ind.m.hist.toFixed(5)} c={fSig.ind.m.hist>=0?"#22c55e":"#ef4444"}/></div></Box>
+                <Box><div><Lbl t="BOLLINGER BANTLARI"/><Row l="Üst" v={"$"+fp(fSig.ind.b.u)} c="#ef4444"/><Row l="Orta" v={"$"+fp(fSig.ind.b.m)} c="#f59e0b"/><Row l="Alt" v={"$"+fp(fSig.ind.b.l)} c="#22c55e"/><div style={{fontSize:8,color:"#2a4070"}}>Genişlik: <span style={{color:fSig.ind.bw>4?"#ef4444":"#f59e0b"}}>{fSig.ind.bw.toFixed(2)}%</span></div></div></Box>
+                <Box><div><Lbl t="EMA (9/21/50)"/><Row l="EMA 9" v={"$"+fp(fSig.ind.e9)} c="#38bdf8"/><Row l="EMA 21" v={"$"+fp(fSig.ind.e21)} c="#38bdf8"/><Row l="EMA 50" v={"$"+fp(fSig.ind.e50)} c="#38bdf8"/><div style={{fontSize:8,color:fSig.ind.slope>=0?"#22c55e":"#ef4444"}}>Eğim: {fSig.ind.slope>=0?"▲":"▼"}{Math.abs(fSig.ind.slope).toFixed(3)}%</div></div></Box>
 
                 {/* Öncü sinyaller */}
-                {fSig.lead&&<Box ch={<div>
+                {fSig.lead&&<Box s={{gridColumn:"1/-1"}}><div>
                   <Lbl t="ÖNCü SİNYALLER"/>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
                     <div style={{background:"#050d20",borderRadius:5,padding:"6px 8px",textAlign:"center"}}>
@@ -683,11 +683,18 @@ function App(){
                       <div style={{fontSize:8,color:"#f59e0b"}}>{fSig.lead.nearFib.lbl}</div>
                     </div>
                   </div>
-                </div>} s={{gridColumn:"1/-1"}}/>}
+                </div></Box>}
               </div>
 
               {/* Sinyal gerekçeleri */}
-              {fSig.reasons?.length>0&&<Box ch={<div><Lbl t="SİNYAL GEREKÇELERİ"/>{fSig.reasons.map((r,i)=><div key={i} style={{fontSize:11,padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:4,borderLeft:`2px solid ${AC[fSig.action]||"#2a4070"}`,color:"#94a3b8"}}>{r}</div>)}</Box>}/>}
+              {fSig.reasons?.length>0&&(
+                <div style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:10}}>
+                  <div style={{fontSize:9,color:"#2a4070",marginBottom:6}}>SİNYAL GEREKÇELERİ</div>
+                  {fSig.reasons.map((r,i)=>(
+                    <div key={i} style={{fontSize:11,padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:4,borderLeft:"2px solid "+(AC[fSig.action]||"#2a4070"),color:"#94a3b8"}}>{r}</div>
+                  ))}
+                </div>
+              )}}
             </div>
             :<div style={{textAlign:"center",color:"#1a3060",paddingTop:60}}><div style={{fontSize:40,marginBottom:10}}>📊</div><div style={{color:stCol,fontSize:11}}>{wsStatus==="live"?"Sol panelden bir parite seçin":"Bağlantı kuruluyor..."}</div></div>
         )}
