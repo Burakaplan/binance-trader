@@ -55,15 +55,66 @@ const srsi=(a,p=14)=>{if(a.length<p*2)return{k:50};const rv=[];for(let i=p;i<=a.
 const cci_=(a,p=20)=>{if(a.length<p)return 0;const sl=a.slice(-p),m=sl.reduce((x,y)=>x+y,0)/p,mad=sl.reduce((x,y)=>x+Math.abs(y-m),0)/p;return mad===0?0:(a[a.length-1]-m)/(0.015*mad);};
 
 function analyze(hist,price){
-  if(hist.length<30)return{action:"BEKLE",conf:0,score:0,reasons:["Veri biriktiriliyyor ("+hist.length+"/30)"],strat:"Bekleniyor",regime:"—",ind:null};
+  if(hist.length<30)return{action:"BEKLE",conf:0,score:0,reasons:["Veri biriktiriliyyor ("+hist.length+"/30)"],strat:"Bekleniyor",regime:"—",ind:null,leading:null};
+
   const r=rsi(hist),m=macd(hist),b=boll(hist),e9=ema(hist,9),e21=ema(hist,21),e50=ema(hist,50),sr=srsi(hist),c=cci_(hist);
   const slope=hist.length>6?(hist[hist.length-1]-hist[hist.length-7])/hist[hist.length-7]*100:0;
   const trending=Math.abs(slope)>.3||b.bw>2.5;
+
+  // ── 1. HACİM ANALİZİ (simüle — fiyat değişim hızından türetilir) ──────────
+  // Gerçek hacim verisi olmadığından fiyat ivmesi × volatilite ile tahmin edilir
+  const recentVols=hist.slice(-10).map((v,i,a)=>i===0?0:Math.abs(v-a[i-1])/a[i-1]*100);
+  const avgVol=recentVols.reduce((a,b)=>a+b,0)/recentVols.length||0.001;
+  const lastVol=recentVols[recentVols.length-1]||0;
+  const volSpike=lastVol/avgVol; // >2 = hacim patlaması
+  const priceDir=hist[hist.length-1]>hist[hist.length-3]?"up":"down";
+  // Birikim: hacim artarken fiyat yatay veya hafif yukarı
+  const accumulation=volSpike>1.5&&slope>-0.2&&slope<1.0;
+  // Dağıtım: hacim artarken fiyat yatay veya hafif aşağı
+  const distribution=volSpike>1.5&&slope>-1.0&&slope<0.2;
+
+  // ── 2. RSI DIVERGENCE ────────────────────────────────────────────────────
+  let bullDiv=false,bearDiv=false;
+  if(hist.length>=30){
+    // Son 20 mumda fiyat ve RSI zirvelerini/diplerini karşılaştır
+    const window=hist.slice(-20);
+    const rsiWindow=window.map((_,i)=>rsi(hist.slice(0,hist.length-20+i+1)));
+    // Fiyat yeni dip, RSI daha yüksek dip → bullish divergence
+    const priceLow1=Math.min(...window.slice(0,10)),priceLow2=Math.min(...window.slice(10));
+    const rsiAtLow1=rsiWindow[window.slice(0,10).indexOf(priceLow1)];
+    const rsiAtLow2=rsiWindow[10+window.slice(10).indexOf(priceLow2)];
+    if(priceLow2<priceLow1&&rsiAtLow2>rsiAtLow1+3) bullDiv=true;
+    // Fiyat yeni zirve, RSI daha düşük zirve → bearish divergence
+    const priceHigh1=Math.max(...window.slice(0,10)),priceHigh2=Math.max(...window.slice(10));
+    const rsiAtHigh1=rsiWindow[window.slice(0,10).indexOf(priceHigh1)];
+    const rsiAtHigh2=rsiWindow[10+window.slice(10).indexOf(priceHigh2)];
+    if(priceHigh2>priceHigh1&&rsiAtHigh2<rsiAtHigh1-3) bearDiv=true;
+  }
+
+  // ── 3. FİBONACCİ SEVİYELERİ ─────────────────────────────────────────────
+  const fibWindow=hist.slice(-50);
+  const fibHigh=Math.max(...fibWindow),fibLow=Math.min(...fibWindow);
+  const fibRange=fibHigh-fibLow||1;
+  const fib236=fibHigh-0.236*fibRange;
+  const fib382=fibHigh-0.382*fibRange;
+  const fib500=fibHigh-0.500*fibRange;
+  const fib618=fibHigh-0.618*fibRange;
+  const fib786=fibHigh-0.786*fibRange;
+  const fibs=[fib236,fib382,fib500,fib618,fib786];
+  const fibLabels=["Fib %23.6","Fib %38.2","Fib %50.0","Fib %61.8","Fib %78.6"];
+  // Fiyat hangi Fibonacci seviyesine yakın? (±%0.8 tolerans)
+  const nearFib=fibs.reduce((best,f,i)=>{const d=Math.abs(price-f)/price*100;return d<best.d?{d,label:fibLabels[i],val:f,idx:i}:best;},{d:999,label:"",val:0,idx:-1});
+  const atFibSupport=nearFib.d<0.8&&nearFib.idx>=2; // %50 altı = destek
+  const atFibResistance=nearFib.d<0.8&&nearFib.idx<2; // %23.6-38.2 = direnç
+
+  // ── SKOR HESAPLA ─────────────────────────────────────────────────────────
   let score=0,reasons=[],strat="";
+
+  // Gecikmeli indikatörler (mevcut)
   if(trending){
     strat="Trend Takip (EMA+MACD)";
-    if(e9>e21&&e21>e50){score+=3;reasons.push("🔼 EMA9>21>50 yükseliş trendi");}
-    else if(e9<e21&&e21<e50){score-=3;reasons.push("🔽 EMA9<21<50 düşüş trendi");}
+    if(e9>e21&&e21>e50){score+=2;reasons.push("🔼 EMA9>21>50 yükseliş trendi");}
+    else if(e9<e21&&e21<e50){score-=2;reasons.push("🔽 EMA9<21<50 düşüş trendi");}
     else if(e9>e21){score+=1;reasons.push("↗ EMA9>EMA21");}
     else{score-=1;reasons.push("↘ EMA9<EMA21");}
     if(m.hist>0){score+=2;reasons.push("⚡ MACD pozitif momentum");}
@@ -72,21 +123,63 @@ function analyze(hist,price){
     else if(r<50&&r>30){score-=1;reasons.push("📉 RSI zayıflama ("+r.toFixed(0)+")");}
   } else {
     strat="Ortalamaya Dönüş (RSI+BB)";
-    if(r<32&&sr.k<25){score+=4;reasons.push("💚 Aşırı satım RSI:"+r.toFixed(0)+" StochRSI:"+sr.k.toFixed(0));}
-    else if(r>68&&sr.k>75){score-=4;reasons.push("❤️ Aşırı alım RSI:"+r.toFixed(0)+" StochRSI:"+sr.k.toFixed(0));}
+    if(r<32&&sr.k<25){score+=3;reasons.push("💚 Aşırı satım RSI:"+r.toFixed(0)+" StochRSI:"+sr.k.toFixed(0));}
+    else if(r>68&&sr.k>75){score-=3;reasons.push("❤️ Aşırı alım RSI:"+r.toFixed(0)+" StochRSI:"+sr.k.toFixed(0));}
     else if(r<42){score+=1;reasons.push("RSI düşük ("+r.toFixed(0)+")");}
     else if(r>58){score-=1;reasons.push("RSI yüksek ("+r.toFixed(0)+")");}
-    if(price<b.l*1.003){score+=3;reasons.push("📊 BB alt bant alım fırsatı");}
-    else if(price>b.u*.997){score-=3;reasons.push("📊 BB üst bant satış baskısı");}
+    if(price<b.l*1.003){score+=2;reasons.push("📊 BB alt bant alım fırsatı");}
+    else if(price>b.u*.997){score-=2;reasons.push("📊 BB üst bant satış baskısı");}
     if(c<-100){score+=1;reasons.push("CCI aşırı satım ("+c.toFixed(0)+")");}
     else if(c>100){score-=1;reasons.push("CCI aşırı alım ("+c.toFixed(0)+")");}
   }
+
+  // ── ÖNİCÜ SİNYALLER (ek puan) ────────────────────────────────────────────
+
+  // Hacim analizi
+  if(accumulation){
+    score+=2;
+    reasons.push("🔋 Birikim tespit edildi (hacim spike: ×"+volSpike.toFixed(1)+")");
+  } else if(distribution){
+    score-=2;
+    reasons.push("📤 Dağıtım tespit edildi (hacim spike: ×"+volSpike.toFixed(1)+")");
+  } else if(volSpike>2&&priceDir==="up"){
+    score+=1;reasons.push("📈 Güçlü alım hacmi (×"+volSpike.toFixed(1)+")");
+  } else if(volSpike>2&&priceDir==="down"){
+    score-=1;reasons.push("📉 Güçlü satış hacmi (×"+volSpike.toFixed(1)+")");
+  }
+
+  // RSI Divergence
+  if(bullDiv){
+    score+=3;
+    reasons.push("🔀 Bullish RSI Divergence — fiyat dip ama RSI toparlanıyor");
+  }
+  if(bearDiv){
+    score-=3;
+    reasons.push("🔀 Bearish RSI Divergence — fiyat zirve ama RSI zayıflıyor");
+  }
+
+  // Fibonacci
+  if(atFibSupport){
+    score+=2;
+    reasons.push("📐 Fibonacci destek: "+nearFib.label+" ($"+nearFib.val.toFixed(2)+")");
+  } else if(atFibResistance){
+    score-=1;
+    reasons.push("📐 Fibonacci direnç: "+nearFib.label+" ($"+nearFib.val.toFixed(2)+")");
+  }
+
+  // EMA ivme / slope
   if(slope>1.5){score+=1;reasons.push("🚀 Güçlü yukarı ivme +"+slope.toFixed(2)+"%");}
   else if(slope<-1.5){score-=1;reasons.push("🌊 Güçlü aşağı ivme "+slope.toFixed(2)+"%");}
-  const conf=Math.min(99,Math.round(Math.abs(score)*12+10));
-  return{action:score>=4?"AL":score<=-4?"SAT":"BEKLE",score,conf,reasons,strat,regime:trending?"TREND":"YATAY",ind:{r,m,b,e9,e21,e50,sr,c,slope,bw:b.bw}};
-}
 
+  const conf=Math.min(99,Math.round(Math.abs(score)*10+10));
+  const action=score>=4?"AL":score<=-4?"SAT":"BEKLE";
+
+  return{
+    action,score,conf,reasons,strat,regime:trending?"TREND":"YATAY",
+    ind:{r,m,b,e9,e21,e50,sr,c,slope,bw:b.bw},
+    leading:{volSpike,accumulation,distribution,bullDiv,bearDiv,nearFib,atFibSupport,atFibResistance,fibs,fibLabels,fibHigh,fibLow}
+  };
+}
 function Spark({data,color,W=78,H=26}){
   if(!data||data.length<2)return<svg width={W} height={H}/>;
   const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||mn*.001;
@@ -470,7 +563,7 @@ function App(){
             <Lbl c="AI SEÇİLEN STRATEJİ"/>
             <div style={{color:"#38bdf8",fontWeight:700}}>🤖 {fSig.strat}</div>
             <div style={{fontSize:9,color:"#2a4070",marginTop:3}}>
-              ✅ Proxy canlı veri · 📊 7G geçmiş · {fHist.length} toplam veri
+              ✅ Proxy canlı · 📊 7G geçmiş · {fHist.length} veri · Hacim+Diverg+Fib aktif
             </div>
           </Box>
 
@@ -484,6 +577,68 @@ function App(){
             <Box><Lbl c="EMA (9/21/50)"/><Row l="EMA 9" v={"$"+fp(fSig.ind.e9)} c="#38bdf8"/><Row l="EMA 21" v={"$"+fp(fSig.ind.e21)} c="#38bdf8"/><Row l="EMA 50" v={"$"+fp(fSig.ind.e50)} c="#38bdf8"/><div style={{fontSize:8,color:fSig.ind.slope>=0?"#22c55e":"#ef4444"}}>Eğim: {fSig.ind.slope>=0?"▲":"▼"}{Math.abs(fSig.ind.slope).toFixed(4)}%</div></Box>
             <Box style={{gridColumn:"1/-1"}}><Lbl c="OSİLATÖRLER"/><div style={{display:"flex",gap:24}}>{[["CCI(20)",fSig.ind.c.toFixed(1),fSig.ind.c<-100?"#22c55e":fSig.ind.c>100?"#ef4444":"#f59e0b"],["Toplam Veri",fHist.length,"#94a3b8"],["Fiyat/sn",pps,"#38bdf8"],["BB Genişliği",fSig.ind.bw.toFixed(2)+"%",fSig.ind.bw>4?"#ef4444":"#f59e0b"]].map(([l,v,c])=><div key={l}><div style={{fontSize:8,color:"#2a4070"}}>{l}</div><div style={{color:c,fontWeight:700,fontSize:13}}>{v}</div></div>)}</div></Box>
           </div>
+
+          {/* ── Öncü Sinyal Paneli ── */}
+          {fSig.leading&&(()=>{
+            const L=fSig.leading;
+            return<Box style={{marginBottom:10}}>
+              <Lbl c="ÖNCü SİNYAL ANALİZİ"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+                {/* Hacim */}
+                <div style={{background:"#050d20",borderRadius:6,padding:"8px 10px"}}>
+                  <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>📦 HACİM ANALİZİ</div>
+                  <div style={{fontSize:13,fontWeight:700,color:L.accumulation?"#22c55e":L.distribution?"#ef4444":"#94a3b8"}}>
+                    {L.accumulation?"BİRİKİM":L.distribution?"DAĞITIM":"NÖTR"}
+                  </div>
+                  <div style={{fontSize:9,color:"#4a6fa5",marginTop:3}}>Spike: <span style={{color:L.volSpike>2?"#f59e0b":"#94a3b8",fontWeight:700}}>×{L.volSpike.toFixed(1)}</span></div>
+                  {L.volSpike>1.5&&<div style={{fontSize:8,color:"#2a4070",marginTop:2}}>{L.volSpike>2?"⚠️ Güçlü hareket yaklaşıyor":"Hafif aktivite"}</div>}
+                </div>
+                {/* RSI Divergence */}
+                <div style={{background:"#050d20",borderRadius:6,padding:"8px 10px"}}>
+                  <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>🔀 RSI DIVERGENCE</div>
+                  <div style={{fontSize:13,fontWeight:700,color:L.bullDiv?"#22c55e":L.bearDiv?"#ef4444":"#94a3b8"}}>
+                    {L.bullDiv?"BULLISH 🟢":L.bearDiv?"BEARISH 🔴":"YOK"}
+                  </div>
+                  <div style={{fontSize:8,color:"#2a4070",marginTop:3}}>
+                    {L.bullDiv?"Fiyat dip → RSI toparlanıyor":L.bearDiv?"Fiyat zirve → RSI zayıflıyor":"Uyumsuzluk tespit edilmedi"}
+                  </div>
+                </div>
+                {/* Fibonacci */}
+                <div style={{background:"#050d20",borderRadius:6,padding:"8px 10px"}}>
+                  <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>📐 FİBONACCİ</div>
+                  <div style={{fontSize:11,fontWeight:700,color:L.atFibSupport?"#22c55e":L.atFibResistance?"#ef4444":"#94a3b8"}}>
+                    {L.atFibSupport?"DESTEK ✓":L.atFibResistance?"DİRENÇ ✗":"—"}
+                  </div>
+                  <div style={{fontSize:9,color:"#f59e0b",marginTop:2,fontWeight:700}}>{L.nearFib.label}</div>
+                  <div style={{fontSize:8,color:"#2a4070"}}>±{L.nearFib.d.toFixed(2)}% uzaklık</div>
+                </div>
+              </div>
+              {/* Fibonacci seviyeleri */}
+              <div style={{background:"#050d20",borderRadius:6,padding:"8px 10px"}}>
+                <div style={{fontSize:8,color:"#2a4070",marginBottom:6}}>FİBONACCİ SEVİYELERİ (50 mum)</div>
+                <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                  {L.fibs.map((f,i)=>{
+                    const pct=Math.abs(fPrice.price-f)/fPrice.price*100;
+                    const isNear=pct<0.8;
+                    const isAbove=fPrice.price>f;
+                    return<div key={i} style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:9,color:"#4a6fa5",width:60}}>{L.fibLabels[i]}</span>
+                      <div style={{flex:1,height:3,background:"#0a1535",borderRadius:2,position:"relative"}}>
+                        <div style={{position:"absolute",left:0,width:"100%",height:"100%",background:isNear?"#f59e0b22":"transparent",borderRadius:2}}/>
+                        {isNear&&<div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",width:6,height:6,borderRadius:"50%",background:"#f59e0b",top:-1.5}}/>}
+                      </div>
+                      <span style={{fontSize:9,color:isNear?"#f59e0b":isAbove?"#22c55e44":"#ef444444",fontWeight:isNear?700:400,width:70,textAlign:"right"}}>${f>100?f.toFixed(2):f.toFixed(4)}</span>
+                      {isNear&&<span style={{fontSize:7,color:"#f59e0b"}}>← ŞİMDİ</span>}
+                    </div>;
+                  })}
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#1a3060",marginTop:6}}>
+                  <span>Dip: ${L.fibLow>100?L.fibLow.toFixed(2):L.fibLow.toFixed(4)}</span>
+                  <span>Zirve: ${L.fibHigh>100?L.fibHigh.toFixed(2):L.fibHigh.toFixed(4)}</span>
+                </div>
+              </div>
+            </Box>;
+          })()}
 
           {fSig.reasons?.length>0&&<Box><Lbl c="SİNYAL GEREKÇELERİ"/>{fSig.reasons.map((r,i)=><div key={i} style={{fontSize:11,padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:4,borderLeft:`2px solid ${AC[fSig.action]||"#2a4070"}`,color:"#94a3b8"}}>{r}</div>)}</Box>}
         </div>
@@ -517,7 +672,7 @@ function App(){
         <span style={{color:"#22c55e"}}>✅ CANLI</span> Proxy polling (10s)<br/>
         <span style={{color:"#38bdf8"}}>📊 GEÇMİŞ</span> Proxy → 7G saatlik<br/>
         <span style={{color:"#f59e0b"}}>🛡 MOD</span> Simülasyon — gerçek para yok<br/>
-        <span style={{color:"#94a3b8"}}>🤖 AI</span> 7 gösterge · Saniyede analiz
+        <span style={{color:"#94a3b8"}}>🤖 AI</span> 10 gösterge · Hacim+Diverg+Fib
       </div>
     </div>
   </div>
