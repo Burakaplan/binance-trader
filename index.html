@@ -180,6 +180,164 @@ function analyze(hist,price){
     leading:{volSpike,accumulation,distribution,bullDiv,bearDiv,nearFib,atFibSupport,atFibResistance,fibs,fibLabels,fibHigh,fibLow}
   };
 }
+// ── ATR Hesabı ─────────────────────────────────────────────────────────────
+function calcAtr(hist, period=14){
+  if(hist.length<period+1) return (hist[hist.length-1]||1)*0.02;
+  const trs=hist.slice(-period-1).map((v,i,a)=>i===0?0:Math.abs(v-a[i-1]));
+  return trs.slice(1).reduce((a,b)=>a+b,0)/period;
+}
+
+// ── Piyasa Rejimi ──────────────────────────────────────────────────────────
+// Trending up / down / ranging / volatile
+function detectRegime(hist){
+  if(hist.length<50) return{type:"unknown",label:"Bilinmiyor",color:"#6b7280"};
+  const e20=ema(hist,20), e50=ema(hist.slice(-60),50);
+  const atr14=calcAtr(hist,14);
+  const price=hist[hist.length-1];
+  const atrPct=atr14/price*100;
+  const slope20=((hist[hist.length-1]-hist[hist.length-21])/hist[hist.length-21])*100;
+  const bb=boll(hist,20);
+  const bbWidthPct=bb.bw;
+
+  if(bbWidthPct<1.5) return{type:"squeeze",label:"SIKIŞMA",color:"#f59e0b",desc:"Büyük hareket bekleniyor"};
+  if(atrPct>3&&bbWidthPct>6) return{type:"volatile",label:"VOLATİL",color:"#ef4444",desc:"Yüksek risk, dikkatli ol"};
+  if(e20>e50&&slope20>1) return{type:"bull",label:"YÜKSELİŞ",color:"#22c55e",desc:"Trend yukarı, al sinyalleri güvenilir"};
+  if(e20<e50&&slope20<-1) return{type:"bear",label:"DÜŞÜŞ",color:"#ef4444",desc:"Trend aşağı, sat sinyalleri güvenilir"};
+  return{type:"range",label:"YATAY",color:"#38bdf8",desc:"Ortalamaya dönüş stratejisi çalışır"};
+}
+
+// ── Dinamik Stop-Loss / Take-Profit (ATR bazlı) ────────────────────────────
+function calcDynamicLevels(price, hist, riskLevel){
+  const atr=calcAtr(hist,14);
+  const regime=detectRegime(hist);
+  // ATR çarpanları risk seviyesine ve rejime göre
+  const multipliers={
+    düşük: {sl:1.5, tp:3.0},
+    orta:  {sl:2.0, tp:4.0},
+    yüksek:{sl:2.5, tp:6.0},
+  };
+  const m=multipliers[riskLevel]||multipliers.orta;
+  // Volatil piyasada SL'yi genişlet
+  const slMult = regime.type==="volatile" ? m.sl*1.4 : m.sl;
+  const tpMult = regime.type==="bull" ? m.tp*1.2 : regime.type==="bear" ? m.tp*0.8 : m.tp;
+  return{
+    stopLoss: price*(1 - slMult*atr/price),
+    takeProfit: price*(1 + tpMult*atr/price),
+    atr, atrPct: atr/price*100,
+    slPct: slMult*atr/price*100,
+    tpPct: tpMult*atr/price*100,
+    regime
+  };
+}
+
+// ── Multi-Timeframe Analiz ─────────────────────────────────────────────────
+// 1 saatlik geçmiş üzerinden farklı zaman dilimlerini simüle eder
+function multiTimeframeSignal(hist){
+  if(hist.length<48) return{tf1h:"—",tf4h:"—",tf1d:"—",alignment:0,label:"Veri yetersiz"};
+  // 1 saatlik (son 14 mum)
+  const sig1h=rsi(hist.slice(-15));
+  // 4 saatlik (her 4 saatlik kapanışı al)
+  const hist4h=hist.filter((_,i)=>i%4===0);
+  const sig4h=rsi(hist4h.slice(-15));
+  // Günlük (her 24 saatlik)
+  const hist1d=hist.filter((_,i)=>i%24===0);
+  const sig1d=hist1d.length>5?rsi(hist1d.slice(-10)):50;
+
+  const dir1h=sig1h>55?"AL":sig1h<45?"SAT":"NÖTR";
+  const dir4h=sig4h>55?"AL":sig4h<45?"SAT":"NÖTR";
+  const dir1d=sig1d>55?"AL":sig1d<45?"SAT":"NÖTR";
+
+  // Hizalama skoru: kaç zaman dilimi aynı yönde?
+  const dirs=[dir1h,dir4h,dir1d];
+  const buyCount=dirs.filter(d=>d==="AL").length;
+  const sellCount=dirs.filter(d=>d==="SAT").length;
+  const alignment=buyCount===3?3:sellCount===3?-3:buyCount===2?1:sellCount===2?-1:0;
+
+  const label=alignment===3?"3/3 AL ✅":alignment===-3?"3/3 SAT 🔴":alignment===1?"2/3 AL":alignment===-1?"2/3 SAT":"Karışık ⚡";
+  return{tf1h:dir1h,tf4h:dir4h,tf1d:dir1d,rsi1h:sig1h,rsi4h:sig4h,rsi1d:sig1d,alignment,label};
+}
+
+// ── BACKTESTING MOToru ─────────────────────────────────────────────────────
+function runBacktest(hist, riskLevel="orta"){
+  if(hist.length<50) return null;
+  const params={
+    düşük: {pos:0.04,sl:0.012,tp:0.035,minScore:4},
+    orta:  {pos:0.07,sl:0.022,tp:0.065,minScore:4},
+    yüksek:{pos:0.12,sl:0.04, tp:0.11, minScore:4},
+  };
+  const p=params[riskLevel]||params.orta;
+  let balance=10000, position=null;
+  const trades=[], equity=[10000];
+
+  for(let i=50; i<hist.length; i++){
+    const slice=hist.slice(0,i);
+    const price=hist[i];
+    const sig=analyze(slice,price);
+
+    // Stop-loss / take-profit
+    if(position){
+      const atr=calcAtr(slice,14);
+      const dynSL=position.entry*(1-2.0*atr/position.entry);
+      const dynTP=position.entry*(1+4.0*atr/position.entry);
+      if(price<=dynSL||price<=position.sl){
+        const gain=position.qty*price-position.inv;
+        balance+=position.qty*price;
+        trades.push({i,action:"SAT",price,gain,reason:"Stop-Loss"});
+        position=null;
+      } else if(price>=dynTP||price>=position.tp){
+        const gain=position.qty*price-position.inv;
+        balance+=position.qty*price;
+        trades.push({i,action:"SAT",price,gain,reason:"Kâr Hedefi"});
+        position=null;
+      }
+    }
+
+    // Yeni pozisyon aç
+    if(!position&&sig.score>=p.minScore&&sig.action==="AL"&&balance>200){
+      const inv=balance*p.pos;
+      position={qty:inv/price,entry:price,inv,sl:price*(1-p.sl),tp:price*(1+p.tp)};
+      balance-=inv;
+      trades.push({i,action:"AL",price,inv});
+    } else if(position&&sig.score<=-p.minScore&&sig.action==="SAT"){
+      const gain=position.qty*price-position.inv;
+      balance+=position.qty*price;
+      trades.push({i,action:"SAT",price,gain,reason:"Sinyal"});
+      position=null;
+    }
+
+    const totalVal=balance+(position?position.qty*price:0);
+    equity.push(totalVal);
+  }
+
+  // Açık pozisyonu kapat
+  if(position){
+    const price=hist[hist.length-1];
+    const gain=position.qty*price-position.inv;
+    balance+=position.qty*price;
+    trades.push({action:"SAT",price,gain,reason:"Kapanış"});
+  }
+
+  const finalVal=balance;
+  const totalReturn=((finalVal/10000)-1)*100;
+  const sells=trades.filter(t=>t.action==="SAT"&&t.gain!=null);
+  const wins=sells.filter(t=>t.gain>0);
+  const winRate=sells.length?Math.round(wins.length/sells.length*100):0;
+  const totalPnl=sells.reduce((s,t)=>s+(t.gain||0),0);
+  const maxEquity=Math.max(...equity);
+  const maxDrawdown=Math.min(...equity.map((v,i)=>((v-maxEquity)/maxEquity)*100));
+
+  return{
+    finalVal,totalReturn,winRate,totalPnl,
+    tradeCount:sells.length,
+    winCount:wins.length,
+    lossCount:sells.length-wins.length,
+    maxDrawdown,
+    equity:equity.slice(0,200), // grafik için
+    trades:trades.slice(-20)
+  };
+}
+
+
 function Spark({data,color,W=78,H=26}){
   if(!data||data.length<2)return<svg width={W} height={H}/>;
   const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||mn*.001;
@@ -262,6 +420,11 @@ function App(){
   const [focus,setFocus]=useState("BTCUSDT");
   const [logs,setLogs]=useState([]);
   const [lastUpd,setLastUpd]=useState(null);
+  const [activeTab,setActiveTab]=useState("analiz"); // analiz | backtest
+  const [btResult,setBtResult]=useState(null);
+  const [btRunning,setBtRunning]=useState(false);
+  const [regime,setRegime]=useState(null);
+  const [mtf,setMtf]=useState(null);
 
   const prR=useRef({}),hiR=useRef({});
   const balR=useRef(10000),portR=useRef({}),trR=useRef([]),stR=useRef({w:0,l:0,t:0});
@@ -281,7 +444,8 @@ function App(){
     const p=RP[riskR.current];
     if(action==="AL"&&balR.current>200&&!portR.current[pair]&&Object.keys(portR.current).length<p.maxP){
       const inv=balR.current*p.pos;
-      portR.current={...portR.current,[pair]:{qty:inv/price,entry:price,inv,sl:price*(1-p.sl),tp:price*(1+p.tp)}};
+      const dynLevels=calcDynamicLevels(price,hiR.current[pair]||[price],riskR.current);
+      portR.current={...portR.current,[pair]:{qty:inv/price,entry:price,inv,sl:dynLevels.stopLoss,tp:dynLevels.takeProfit,atrPct:dynLevels.atrPct}};
       balR.current-=inv;setPortfolio({...portR.current});setBalance(balR.current);
       trR.current=[{id:Date.now(),pair,action:"AL",price,inv,reason,t:new Date().toLocaleTimeString("tr-TR")},...trR.current].slice(0,300);
       setTrades([...trR.current]);
@@ -324,6 +488,14 @@ function App(){
     setHists(Object.fromEntries(Object.entries(hiR.current).map(([k,v])=>[k,v.slice(-500)])));
     setTickCount(c=>c+1);
     setLastUpd(new Date().toLocaleTimeString("tr-TR"));
+    // Rejim + MTF analizi
+    if(prR.current[focus]){
+      const fh=hiR.current[focus]||[];
+      if(fh.length>50){
+        setRegime(detectRegime(fh));
+        setMtf(multiTimeframeSignal(fh));
+      }
+    }
     if(botR.current){
       Object.entries(portR.current).forEach(([pair,pos])=>{
         const cur=prR.current[pair]?.price;if(!cur)return;
@@ -536,8 +708,208 @@ function App(){
 
     {/* ORTA */}
     <div style={{padding:14,overflowY:"auto"}}>
-      <div style={{fontSize:9,color:"#2a4070",letterSpacing:2,marginBottom:10}}>🔬 AI TEKNİK ANALİZ — {focus}</div>
-      {fPrice.price&&fSig.ind?(
+      {/* Tab Navigation */}
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        {[["analiz","🔬 ANALİZ"],["backtest","📈 BACKTEST"],["rejim","🌡 REJİM"]].map(([tab,label])=>(
+          <button key={tab} onClick={()=>{
+            setActiveTab(tab);
+            if(tab==="backtest"&&!btResult&&hists[focus]?.length>50){
+              setBtRunning(true);
+              setTimeout(()=>{
+                const r=runBacktest(hists[focus],risk);
+                setBtResult(r);setBtRunning(false);
+              },100);
+            }
+            if(tab==="rejim"){
+              const fh=hists[focus]||[];
+              if(fh.length>50){setRegime(detectRegime(fh));setMtf(multiTimeframeSignal(fh));}
+            }
+          }} style={{padding:"5px 14px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",
+            background:activeTab===tab?"#0d1f42":"#080e24",
+            border:`1px solid ${activeTab===tab?"#2a5a9e":"#1a2a5e"}`,
+            color:activeTab===tab?"#fff":"#4a6fa5"
+          }}>{label}</button>
+        ))}
+        {btResult&&activeTab==="backtest"&&<button onClick={()=>{
+          setBtRunning(true);setTimeout(()=>{const r=runBacktest(hists[focus],risk);setBtResult(r);setBtRunning(false);},100);
+        }} style={{padding:"5px 10px",borderRadius:6,fontSize:9,cursor:"pointer",fontFamily:"inherit",background:"#0a1228",border:"1px solid #1a2a5e",color:"#4a6fa5",marginLeft:"auto"}}>🔄 Yenile</button>}
+      </div>
+      {activeTab==="backtest"&&(
+        <div>
+          {btRunning?(
+            <div style={{textAlign:"center",paddingTop:60}}>
+              <div style={{width:32,height:32,border:"3px solid #38bdf8",borderTop:"3px solid transparent",borderRadius:"50%",animation:"spin 1s linear infinite",margin:"0 auto 16px"}}/>
+              <div style={{color:"#38bdf8",fontSize:12}}>7 günlük veri üzerinde backtest çalışıyor...</div>
+            </div>
+          ):!btResult?(
+            <div style={{textAlign:"center",paddingTop:60}}>
+              <div style={{fontSize:40,marginBottom:12}}>📈</div>
+              <div style={{color:"#4a6fa5",fontSize:12,marginBottom:16}}>Sol panelden bir coin seçip buraya tıklayın</div>
+              <button onClick={()=>{if(hists[focus]?.length>50){setBtRunning(true);setTimeout(()=>{setBtResult(runBacktest(hists[focus],risk));setBtRunning(false);},100);}}} style={{padding:"10px 24px",background:"#14532d",border:"1px solid #22c55e",borderRadius:8,color:"#22c55e",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>▶ Backtest Başlat ({focus.replace("USDT","")})</button>
+            </div>
+          ):(()=>{
+            const R=btResult;
+            const eqData=R.equity;
+            const W=460,H=80;
+            const mn=Math.min(...eqData),mx=Math.max(...eqData),rng=mx-mn||1;
+            const pts=eqData.map((v,i)=>`${i/(eqData.length-1)*W},${H-((v-mn)/rng)*(H-4)-2}`).join(" ");
+            const eqColor=R.totalReturn>=0?"#22c55e":"#ef4444";
+            const uid="bteq";
+            return<div>
+              {/* Özet kartlar */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:14}}>
+                {[
+                  ["Toplam Getiri",(R.totalReturn>=0?"+":"")+R.totalReturn.toFixed(2)+"%",R.totalReturn>=0?"#22c55e":"#ef4444"],
+                  ["Win Rate",R.winRate+"%",R.winRate>=50?"#22c55e":"#f59e0b"],
+                  ["İşlem Sayısı",R.tradeCount,"#94a3b8"],
+                  ["Max Drawdown",R.maxDrawdown.toFixed(1)+"%","#ef4444"],
+                ].map(([l,v,c])=>(
+                  <div key={l} style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+                    <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>{l}</div>
+                    <div style={{fontSize:16,fontWeight:700,color:c}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+                {[
+                  ["Başlangıç","$10,000","#94a3b8"],
+                  ["Final Değer","$"+R.finalVal.toFixed(2),R.finalVal>=10000?"#22c55e":"#ef4444"],
+                  ["Net Kâr/Zarar",(R.totalPnl>=0?"+":"")+"$"+R.totalPnl.toFixed(2),R.totalPnl>=0?"#22c55e":"#ef4444"],
+                  ["Kazanan",R.winCount+" işlem","#22c55e"],
+                  ["Kaybeden",R.lossCount+" işlem","#ef4444"],
+                  ["Ortalama/İşlem",R.tradeCount>0?"$"+(R.totalPnl/R.tradeCount).toFixed(2):"—",R.totalPnl>=0?"#22c55e":"#ef4444"],
+                ].map(([l,v,c])=>(
+                  <div key={l} style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:6,padding:"6px 8px"}}>
+                    <div style={{fontSize:8,color:"#2a4070",marginBottom:2}}>{l}</div>
+                    <div style={{fontWeight:700,color:c,fontSize:12}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Equity curve */}
+              <Box style={{marginBottom:12}}>
+                <Lbl c={"EQUİTY CURVESİ — "+focus.replace("USDT","")+" (7 GÜN)"}/>
+                <svg width={W} height={H} style={{display:"block"}}>
+                  <defs><linearGradient id={uid} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={eqColor} stopOpacity=".15"/><stop offset="100%" stopColor={eqColor} stopOpacity="0"/></linearGradient></defs>
+                  <line x1={0} y1={H-((10000-mn)/rng)*(H-4)-2} x2={W} y2={H-((10000-mn)/rng)*(H-4)-2} stroke="#1a2a5e" strokeWidth="1" strokeDasharray="4,4"/>
+                  <polygon points={`${pts} ${W},${H} 0,${H}`} fill={`url(#${uid})`}/>
+                  <polyline points={pts} fill="none" stroke={eqColor} strokeWidth="2" strokeLinejoin="round"/>
+                </svg>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4070",marginTop:4}}>
+                  <span>7 gün önce: $10,000</span>
+                  <span style={{color:eqColor}}>Bugün: ${R.finalVal.toFixed(0)}</span>
+                </div>
+              </Box>
+              {/* Son işlemler */}
+              <Box>
+                <Lbl c="SON BACKTEST İŞLEMLERİ"/>
+                {R.trades.slice(-8).reverse().map((t,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:3,borderLeft:`2px solid ${t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444"}`}}>
+                    <span style={{color:t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444",fontSize:10,fontWeight:700}}>{t.action==="AL"?"↑ AL":"↓ SAT"}</span>
+                    <span style={{color:"#4a6fa5",fontSize:9}}>${t.price>100?t.price.toFixed(2):t.price.toFixed(4)}</span>
+                    {t.gain!=null&&<span style={{color:t.gain>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:9}}>{t.gain>=0?"+":""}${t.gain.toFixed(2)}</span>}
+                    {t.reason&&<span style={{color:"#2a4070",fontSize:8}}>{t.reason}</span>}
+                  </div>
+                ))}
+              </Box>
+              <div style={{marginTop:10,fontSize:9,color:"#1a3060",padding:"6px 10px",background:"#050810",borderRadius:6}}>
+                ⚠️ Geçmiş performans gelecek sonuçları garanti etmez. Backtest gerçek spread, komisyon ve slippage içermez.
+              </div>
+            </div>;
+          })()}
+        </div>
+      )}
+
+      {activeTab==="rejim"&&(
+        <div>
+          {!regime?(
+            <div style={{textAlign:"center",paddingTop:60,color:"#1a3060"}}>
+              <div style={{fontSize:36,marginBottom:10}}>🌡</div>
+              <div>Sol panelden coin seçin</div>
+            </div>
+          ):(()=>{
+            const R=regime,M=mtf||{};
+            const regimeColors={bull:"#22c55e",bear:"#ef4444",range:"#38bdf8",volatile:"#ef4444",squeeze:"#f59e0b",unknown:"#6b7280"};
+            const rc=regimeColors[R.type]||"#6b7280";
+            return<div>
+              {/* Rejim kartı */}
+              <Box style={{marginBottom:12,borderColor:rc+"44",background:rc+"08"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontSize:9,color:"#2a4070",marginBottom:4}}>PIYASA REJİMİ — {focus.replace("USDT","")}</div>
+                    <div style={{fontSize:24,fontWeight:700,color:rc}}>{R.label}</div>
+                    <div style={{fontSize:11,color:"#6a8ab0",marginTop:4}}>{R.desc}</div>
+                  </div>
+                  <div style={{fontSize:48}}>{R.type==="bull"?"🐂":R.type==="bear"?"🐻":R.type==="squeeze"?"🗜️":R.type==="volatile"?"⚡":"↔️"}</div>
+                </div>
+                <div style={{marginTop:10,padding:"8px",background:"#050d20",borderRadius:6,fontSize:10,color:rc===""#22c55e""?"#22c55e":"#6a8ab0"}}>
+                  {R.type==="bull"&&"✅ Yükseliş trendinde AL sinyalleri daha güvenilir. SAT sinyallerini filtrele."}
+                  {R.type==="bear"&&"🔴 Düşüş trendinde SAT sinyalleri daha güvenilir. AL sinyallerini filtrele."}
+                  {R.type==="range"&&"↔️ Yatay piyasada RSI+BB stratejisi çalışır. EMA sinyallerini filtrele."}
+                  {R.type==="squeeze"&&"⚠️ Bollinger sıkışması! Büyük hareket yaklaşıyor. Yön belirsiz, bekle."}
+                  {R.type==="volatile"&&"⚡ Aşırı volatilite! Stop-loss'ları geniş tut veya bekle."}
+                </div>
+              </Box>
+
+              {/* Multi-Timeframe */}
+              <Box style={{marginBottom:12}}>
+                <Lbl c="MULTI-TIMEFRAME ANALİZİ"/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+                  {[["1 Saatlik",M.tf1h,M.rsi1h],["4 Saatlik",M.tf4h,M.rsi4h],["Günlük",M.tf1d,M.rsi1d]].map(([tf,dir,r])=>{
+                    const c=dir==="AL"?"#22c55e":dir==="SAT"?"#ef4444":"#6b7280";
+                    return<div key={tf} style={{background:"#050d20",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
+                      <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>{tf}</div>
+                      <div style={{fontSize:14,fontWeight:700,color:c}}>{dir||"—"}</div>
+                      <div style={{fontSize:9,color:"#4a6fa5",marginTop:2}}>RSI: {r?.toFixed(0)||"—"}</div>
+                    </div>;
+                  })}
+                </div>
+                <div style={{background:"#050d20",borderRadius:6,padding:"10px 12px",textAlign:"center"}}>
+                  <div style={{fontSize:9,color:"#2a4070",marginBottom:4}}>HIZALAMA</div>
+                  <div style={{fontSize:16,fontWeight:700,color:M.alignment>0?"#22c55e":M.alignment<0?"#ef4444":"#f59e0b"}}>{M.label||"—"}</div>
+                  <div style={{fontSize:9,color:"#4a6fa5",marginTop:4}}>
+                    {M.alignment===3&&"Tüm zaman dilimleri AL — güçlü sinyal ✅"}
+                    {M.alignment===-3&&"Tüm zaman dilimleri SAT — güçlü sinyal 🔴"}
+                    {M.alignment===1&&"Çoğunluk AL — orta sinyal"}
+                    {M.alignment===-1&&"Çoğunluk SAT — orta sinyal"}
+                    {M.alignment===0&&"Karışık sinyaller — beklemek mantıklı"}
+                  </div>
+                </div>
+              </Box>
+
+              {/* Dinamik SL/TP */}
+              {(()=>{
+                const fh=hists[focus]||[];
+                if(fh.length<20) return null;
+                const price=prices[focus]?.price;if(!price)return null;
+                const D=calcDynamicLevels(price,fh,risk);
+                return<Box>
+                  <Lbl c={"DİNAMİK STOP-LOSS / TAKE-PROFIT (ATR Bazlı) — "+risk.toUpperCase()}/>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                    {[
+                      ["ATR(14)",D.atr>1?D.atr.toFixed(2):D.atr.toFixed(5),"#94a3b8"],
+                      ["ATR %",D.atrPct.toFixed(2)+"%","#f59e0b"],
+                      ["Volatilite",D.atrPct>3?"Yüksek":D.atrPct>1?"Normal":"Düşük",D.atrPct>3?"#ef4444":D.atrPct>1?"#f59e0b":"#22c55e"],
+                      ["Stop-Loss","$"+fp(D.stopLoss)+" (−"+D.slPct.toFixed(2)+"%)","#ef4444"],
+                      ["Take-Profit","$"+fp(D.takeProfit)+" (+"+D.tpPct.toFixed(2)+"%)","#22c55e"],
+                      ["Risk/Ödül","1 : "+(D.tpPct/D.slPct).toFixed(1),"#38bdf8"],
+                    ].map(([l,v,c])=>(
+                      <div key={l} style={{background:"#050d20",borderRadius:5,padding:"6px 8px"}}>
+                        <div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div>
+                        <div style={{fontWeight:700,color:c,fontSize:11}}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{marginTop:8,fontSize:9,color:"#2a4070",padding:"5px 8px",background:"#050d20",borderRadius:4}}>
+                    💡 Bot yeni pozisyon açarken bu ATR bazlı seviyeleri otomatik kullanır.
+                  </div>
+                </Box>;
+              })()}
+            </div>;
+          })()}
+        </div>
+      )}
+
+      {activeTab==="analiz"&&(
         <div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
             <div>
@@ -643,6 +1015,7 @@ function App(){
           {fSig.reasons?.length>0&&<Box><Lbl c="SİNYAL GEREKÇELERİ"/>{fSig.reasons.map((r,i)=><div key={i} style={{fontSize:11,padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:4,borderLeft:`2px solid ${AC[fSig.action]||"#2a4070"}`,color:"#94a3b8"}}>{r}</div>)}</Box>}
         </div>
       ):<div style={{textAlign:"center",color:"#1a3060",paddingTop:60}}><div style={{fontSize:40,marginBottom:10}}>⚡</div><div style={{color:wsCol,fontSize:11}}>{wsStatus==="live"?"Sol panelden bir parite seçin":"Proxy bağlantısı kuruluyor..."}</div></div>}
+      )}
     </div>
 
     {/* SAĞ */}
