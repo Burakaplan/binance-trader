@@ -389,18 +389,34 @@ function App(){
     let loaded=0;
     const base=pxUrl.replace("/api/prices","");
     log("📊 7 günlük geçmiş veri yükleniyor...","info");
-    COINS.forEach((coin,idx)=>{
-      const xhr=new XMLHttpRequest();xhr.timeout=15000;xhr.open("GET",base+"/api/prices?type=history&id="+coin.cg,true);
+    // Sıralı yükleme — rate limit aşmamak için her istek arasında 5 saniye bekle
+    function loadNext(idx){
+      if(idx>=COINS.length){
+        runAnalysis();
+        log("✅ 7G geçmiş tamam — "+loaded+" coin × 168 saatlik","info");
+        return;
+      }
+      const coin=COINS[idx];
+      const xhr=new XMLHttpRequest();xhr.timeout=15000;
+      xhr.open("GET",base+"/api/prices?type=history&id="+coin.cg,true);
       xhr.onreadystatechange=()=>{
         if(xhr.readyState!==4)return;
-        if(xhr.status===200){try{const d=JSON.parse(xhr.responseText);if(d.prices?.length){hiR.current[coin.pair]=d.prices;const last=d.prices[d.prices.length-1];if(!prR.current[coin.pair])prR.current[coin.pair]={price:last,chg:((last-d.prices[0])/d.prices[0])*100,high:Math.max(...d.prices.slice(-24)),low:Math.min(...d.prices.slice(-24))};}}catch(_){}}
-        loaded++;setHistPct(Math.round(loaded/COINS.length*100));
-        if(loaded===COINS.length){runAnalysis();log("✅ 7G geçmiş tamam — "+COINS.length+" coin × 168 saatlik","info");}
+        if(xhr.status===200){
+          try{const d=JSON.parse(xhr.responseText);if(d.prices?.length){hiR.current[coin.pair]=d.prices;const last=d.prices[d.prices.length-1];if(!prR.current[coin.pair])prR.current[coin.pair]={price:last,chg:((last-d.prices[0])/d.prices[0])*100,high:Math.max(...d.prices.slice(-24)),low:Math.min(...d.prices.slice(-24))};loaded++;}}catch(_){}
+          setHistPct(Math.round((idx+1)/COINS.length*100));
+          if(idx===0)runAnalysis(); // ilk coin gelince analizi başlat
+        } else if(xhr.status===429){
+          log("⏳ Rate limit — 15s bekleniyor ("+coin.name+")","warn");
+          setTimeout(()=>loadNext(idx),15000); // rate limit'te bekle, aynı coin'i tekrar dene
+          return;
+        }
+        setTimeout(()=>loadNext(idx+1),2000); // sonraki coin için 2s bekle
       };
-      xhr.ontimeout=()=>{loaded++;if(loaded===COINS.length){runAnalysis();}};
-      xhr.onerror=()=>{loaded++;if(loaded===COINS.length){runAnalysis();}};
-      setTimeout(()=>xhr.send(),idx*300);
-    });
+      xhr.ontimeout=()=>{setTimeout(()=>loadNext(idx+1),1000);};
+      xhr.onerror=()=>{setTimeout(()=>loadNext(idx+1),1000);};
+      xhr.send();
+    }
+    loadNext(0);
   },[pxUrl]);
 
   // Anlık fiyat — proxy polling
