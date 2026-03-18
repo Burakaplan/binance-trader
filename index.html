@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Kripto AI Trader</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#04081a;color:#b0c4f8;font-family:'JetBrains Mono','Fira Code',Consolas,monospace;font-size:12px;min-height:100vh}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#020610}::-webkit-scrollbar-thumb{background:#1a2a5e;border-radius:2px}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.blink{animation:blink 1.5s infinite}
+button{cursor:pointer;font-family:inherit;transition:all .2s}
+input{font-family:inherit}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback}=React;
+
+const COINS=[
+  {id:"bitcoin",       pair:"BTCUSDT", name:"Bitcoin"},
+  {id:"ethereum",      pair:"ETHUSDT", name:"Ethereum"},
+  {id:"binancecoin",   pair:"BNBUSDT", name:"BNB"},
+  {id:"solana",        pair:"SOLUSDT", name:"Solana"},
+  {id:"ripple",        pair:"XRPUSDT", name:"XRP"},
+  {id:"cardano",       pair:"ADAUSDT", name:"Cardano"},
+  {id:"dogecoin",      pair:"DOGEUSDT",name:"Dogecoin"},
+  {id:"avalanche-2",   pair:"AVAXUSDT",name:"Avalanche"},
+  {id:"matic-network", pair:"MATICUSDT",name:"Polygon"},
+  {id:"chainlink",     pair:"LINKUSDT",name:"Chainlink"},
+  {id:"polkadot",      pair:"DOTUSDT", name:"Polkadot"},
+  {id:"litecoin",      pair:"LTCUSDT", name:"Litecoin"},
+  {id:"cosmos",        pair:"ATOMUSDT",name:"Cosmos"},
+  {id:"uniswap",       pair:"UNIUSDT", name:"Uniswap"},
+];
+const PAIRS=COINS.map(c=>c.pair);
+const BY_PAIR=Object.fromEntries(COINS.map(c=>[c.pair,c]));
+
+// ── Göstergeler ───────────────────────────────────────────────────────────────
+const ema=(a,p)=>{if(a.length<p)return a[a.length-1]||0;const k=2/(p+1);let e=a.slice(0,p).reduce((x,y)=>x+y,0)/p;for(let i=p;i<a.length;i++)e=a[i]*k+e*(1-k);return e;};
+const rsi=(a,p=14)=>{if(a.length<p+1)return 50;let g=0,l=0;for(let i=a.length-p;i<a.length;i++){const d=a[i]-a[i-1];d>0?g+=d:l+=Math.abs(d);}return 100-100/(1+g/(l||1e-9));};
+const macd=(a)=>{const f=ema(a,12),s=ema(a,26),ln=f-s,sl=ema(a.slice(-9).map((_,i)=>ema(a.slice(0,a.length-8+i),12)-ema(a.slice(0,a.length-8+i),26)),9);return{line:ln,sig:sl,hist:ln-sl};};
+const boll=(a,p=20)=>{if(a.length<p){const v=a[a.length-1]||0;return{u:v*1.02,m:v,l:v*.98,bw:2};}const sl=a.slice(-p),m=sl.reduce((x,y)=>x+y,0)/p,sd=Math.sqrt(sl.reduce((x,y)=>x+(y-m)**2,0)/p);return{u:m+2*sd,m,l:m-2*sd,bw:4*sd/m*100};};
+const srsi=(a,p=14)=>{if(a.length<p*2)return{k:50};const rv=[];for(let i=p;i<=a.length;i++)rv.push(rsi(a.slice(i-p-1,i)));const rc=rv.slice(-p),mn=Math.min(...rc),mx=Math.max(...rc);return{k:Math.max(0,Math.min(100,mx===mn?50:(rv[rv.length-1]-mn)/(mx-mn)*100))};};
+const cci_=(a,p=20)=>{if(a.length<p)return 0;const sl=a.slice(-p),m=sl.reduce((x,y)=>x+y,0)/p,mad=sl.reduce((x,y)=>x+Math.abs(y-m),0)/p;return mad===0?0:(a[a.length-1]-m)/(0.015*mad);};
+
+function analyze(hist,price){
+  if(hist.length<35)return{action:"BEKLE",conf:0,score:0,reasons:["Veri biriktiriliyyor ("+hist.length+"/35)"],strat:"Bekleniyor",regime:"—",ind:null};
+  const r=rsi(hist),m=macd(hist),b=boll(hist),e9=ema(hist,9),e21=ema(hist,21),e50=ema(hist,50),sr=srsi(hist),c=cci_(hist);
+  const slope=hist.length>6?(hist[hist.length-1]-hist[hist.length-7])/hist[hist.length-7]*100:0;
+  const trending=Math.abs(slope)>.3||b.bw>2.5;
+  let score=0,reasons=[],strat="";
+  if(trending){
+    strat="Trend Takip (EMA+MACD)";
+    if(e9>e21&&e21>e50){score+=3;reasons.push("🔼 EMA9>21>50 yükseliş trendi");}
+    else if(e9<e21&&e21<e50){score-=3;reasons.push("🔽 EMA9<21<50 düşüş trendi");}
+    else if(e9>e21){score+=1;reasons.push("↗ EMA9>EMA21");}
+    else{score-=1;reasons.push("↘ EMA9<EMA21");}
+    if(m.hist>0){score+=2;reasons.push("⚡ MACD pozitif momentum");}
+    else{score-=2;reasons.push("⚡ MACD negatif momentum");}
+    if(r>50&&r<70){score+=1;reasons.push("📈 RSI momentum ("+r.toFixed(0)+")");}
+    else if(r<50&&r>30){score-=1;reasons.push("📉 RSI zayıflama ("+r.toFixed(0)+")");}
+  } else {
+    strat="Ortalamaya Dönüş (RSI+BB)";
+    if(r<32&&sr.k<25){score+=4;reasons.push("💚 Aşırı satım RSI:"+r.toFixed(0)+" StochRSI:"+sr.k.toFixed(0));}
+    else if(r>68&&sr.k>75){score-=4;reasons.push("❤️ Aşırı alım RSI:"+r.toFixed(0)+" StochRSI:"+sr.k.toFixed(0));}
+    else if(r<42){score+=1;reasons.push("RSI düşük ("+r.toFixed(0)+")");}
+    else if(r>58){score-=1;reasons.push("RSI yüksek ("+r.toFixed(0)+")");}
+    if(price<b.l*1.003){score+=3;reasons.push("📊 BB alt bant alım fırsatı");}
+    else if(price>b.u*.997){score-=3;reasons.push("📊 BB üst bant satış baskısı");}
+    if(c<-100){score+=1;reasons.push("CCI aşırı satım ("+c.toFixed(0)+")");}
+    else if(c>100){score-=1;reasons.push("CCI aşırı alım ("+c.toFixed(0)+")");}
+  }
+  if(slope>1.5){score+=1;reasons.push("🚀 Güçlü yukarı ivme +"+slope.toFixed(2)+"%");}
+  else if(slope<-1.5){score-=1;reasons.push("🌊 Güçlü aşağı ivme "+slope.toFixed(2)+"%");}
+  const conf=Math.min(99,Math.round(Math.abs(score)*12+10));
+  return{action:score>=4?"AL":score<=-4?"SAT":"BEKLE",score,conf,reasons,strat,regime:trending?"TREND":"YATAY",ind:{r,m,b,e9,e21,e50,sr,c,slope,bw:b.bw}};
+}
+
+function Spark({data,color,W=78,H=26}){
+  if(!data||data.length<2)return<svg width={W} height={H}/>;
+  const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||mn*.001;
+  const pts=data.map((v,i)=>`${i/(data.length-1)*W},${H-((v-mn)/rng)*(H-3)-1}`).join(" ");
+  const uid="s"+(color+W).split("").reduce((a,c)=>a+c.charCodeAt(0),0);
+  return<svg width={W} height={H}><defs><linearGradient id={uid} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".2"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs><polygon points={`${pts} ${W},${H} 0,${H}`} fill={`url(#${uid})`}/><polyline points={pts} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round"/></svg>;
+}
+function Gauge({v,action}){
+  const col=action==="AL"?"#22c55e":action==="SAT"?"#ef4444":"#6b7280";
+  const r=28,circ=2*Math.PI*r,dash=v/100*circ;
+  return<svg width={76} height={54}><circle cx={38} cy={38} r={r} fill="none" stroke="#1e293b" strokeWidth={7}/><circle cx={38} cy={38} r={r} fill="none" stroke={col} strokeWidth={5} strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 38 38)"/><text x={38} y={34} textAnchor="middle" fill={col} fontSize="14" fontWeight="bold">{v}%</text><text x={38} y={47} textAnchor="middle" fill="#475569" fontSize="8">GÜVEN</text></svg>;
+}
+const fp=v=>v>1000?v.toFixed(2):v>10?v.toFixed(3):v>1?v.toFixed(4):v.toFixed(6);
+const AC={AL:"#22c55e",SAT:"#ef4444",BEKLE:"#6b7280"};
+
+// ── Proxy Kurulum Ekranı ──────────────────────────────────────────────────────
+function SetupScreen({onSave}){
+  const [url,setUrl]=useState("");
+  const [testing,setTesting]=useState(false);
+  const [testResult,setTestResult]=useState(null);
+
+  function testUrl(u){
+    setTesting(true);setTestResult(null);
+    const xhr=new XMLHttpRequest();
+    xhr.timeout=10000;
+    xhr.open("GET",u,true);
+    xhr.onreadystatechange=function(){
+      if(xhr.readyState!==4)return;
+      setTesting(false);
+      if(xhr.status===200){
+        try{const d=JSON.parse(xhr.responseText);if(d.bitcoin||d.ethereum){setTestResult({ok:true,msg:"✅ Bağlantı başarılı! Bitcoin: $"+d.bitcoin?.usd?.toFixed(0)});}else{setTestResult({ok:false,msg:"⚠️ Yanıt beklenen formatta değil"});}}
+        catch(e){setTestResult({ok:false,msg:"⚠️ JSON parse hatası"});}
+      }else{setTestResult({ok:false,msg:"❌ HTTP "+xhr.status+" — URL'yi kontrol edin"});}
+    };
+    xhr.ontimeout=()=>{setTesting(false);setTestResult({ok:false,msg:"❌ Timeout — Vercel deploy edildi mi?"});};
+    xhr.onerror=()=>{setTesting(false);setTestResult({ok:false,msg:"❌ Ağ hatası — URL'yi kontrol edin"});};
+    xhr.send();
+  }
+
+  return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#04081a"}}>
+      <div style={{width:560,background:"#080e24",border:"1px solid #1a2a5e",borderRadius:12,padding:28}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+          <div style={{width:40,height:40,borderRadius:10,background:"#f0b90b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:900,color:"#000"}}>₿</div>
+          <div><div style={{fontSize:15,fontWeight:700,color:"#fff"}}>KRİPTO AI TRADER</div><div style={{fontSize:10,color:"#2a4070"}}>Proxy Kurulumu — Türkiye'den Gerçek Veri</div></div>
+        </div>
+
+        {/* Neden gerekli */}
+        <div style={{background:"#0a1535",border:"1px solid #1a3060",borderRadius:8,padding:12,marginBottom:20,fontSize:11,lineHeight:1.7,color:"#6a8ab0"}}>
+          <div style={{color:"#f59e0b",fontWeight:700,marginBottom:4}}>⚠️ Neden proxy gerekiyor?</div>
+          Türkiye'den CoinGecko, Binance ve diğer kripto API'lerine doğrudan erişim engelleniyor.
+          Çözüm: Vercel'de ücretsiz bir proxy kurup URL'sini buraya girmek.
+          <span style={{color:"#22c55e"}}> 3 dakikada kurulur.</span>
+        </div>
+
+        {/* Adımlar */}
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:10,color:"#2a4070",letterSpacing:1,marginBottom:10}}>KURULUM ADIMLARI</div>
+          {[
+            ["1","github.com'a gidin → New repository → İsim: crypto-proxy → Public → Create"],
+            ["2","Repoya girin → 'uploading an existing file' → api/prices.js ve vercel.json yükleyin"],
+            ["3","vercel.com/new → GitHub ile giriş → crypto-proxy reposunu import edin → Deploy"],
+            ["4","Deploy tamamlanınca URL'yi kopyalayın → aşağıya /api/prices ekleyerek yapıştırın"],
+          ].map(([n,t])=>(
+            <div key={n} style={{display:"flex",gap:10,marginBottom:8,alignItems:"flex-start"}}>
+              <div style={{width:20,height:20,borderRadius:"50%",background:"#1a2a5e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#38bdf8",flexShrink:0,marginTop:1}}>{n}</div>
+              <div style={{fontSize:11,color:"#6a8ab0",lineHeight:1.5}}>{t}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* URL girişi */}
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:10,color:"#2a4070",marginBottom:6}}>PROXY URL (örnek: https://crypto-proxy-xxx.vercel.app/api/prices)</div>
+          <div style={{display:"flex",gap:8}}>
+            <input
+              value={url}
+              onChange={e=>setUrl(e.target.value)}
+              placeholder="https://xxx.vercel.app/api/prices"
+              style={{flex:1,background:"#0a1535",border:"1px solid #1a2a5e",borderRadius:6,padding:"8px 12px",color:"#b0c4f8",fontSize:11,outline:"none"}}
+            />
+            <button onClick={()=>testUrl(url)} disabled={!url||testing} style={{padding:"8px 16px",background:"#0a1535",border:"1px solid #1a3060",borderRadius:6,color:"#38bdf8",fontSize:11,opacity:!url||testing?.6:1}}>
+              {testing?"Test...":"Test Et"}
+            </button>
+          </div>
+          {testResult&&<div style={{marginTop:8,fontSize:11,color:testResult.ok?"#22c55e":"#ef4444",padding:"6px 10px",background:testResult.ok?"#021008":"#120305",borderRadius:5}}>{testResult.msg}</div>}
+        </div>
+
+        <button onClick={()=>{if(url)onSave(url);}} disabled={!url} style={{width:"100%",padding:"12px",background:url?"#14532d":"#0a1228",border:`1px solid ${url?"#22c55e":"#1a2a5e"}`,borderRadius:8,color:url?"#22c55e":"#4a6fa5",fontWeight:700,fontSize:13,letterSpacing:1,opacity:url?1:.6}}>
+          ▶ BOTU BAŞLAT
+        </button>
+
+        <div style={{marginTop:16,padding:12,background:"#030810",borderRadius:8,fontSize:10,color:"#1a3060",lineHeight:1.8}}>
+          <div style={{color:"#2a4070",marginBottom:4}}>İNDİRİLECEK DOSYALAR:</div>
+          <div>• <span style={{color:"#38bdf8"}}>api/prices.js</span> — Vercel proxy kodu</div>
+          <div>• <span style={{color:"#38bdf8"}}>vercel.json</span> — Vercel yapılandırması</div>
+          <div style={{marginTop:6,color:"#2a4070"}}>Bu dosyaları bir önceki mesajdan indirin.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Ana Uygulama ──────────────────────────────────────────────────────────────
+function App(){
+  const [proxyUrl,setProxyUrl]=useState(null);
+  const [status,setStatus]=useState("connecting");
+  const [statusMsg,setStatusMsg]=useState("Bağlanıyor...");
+  const [prices,setPrices]=useState({});
+  const [hists,setHists]=useState({});
+  const [market,setMarket]=useState([]);
+  const [sigs,setSigs]=useState({});
+  const [tickCount,setTickCount]=useState(0);
+  const [botOn,setBotOn]=useState(false);
+  const [balance,setBalance]=useState(10000);
+  const [portfolio,setPortfolio]=useState({});
+  const [trades,setTrades]=useState([]);
+  const [pnl,setPnl]=useState(0);
+  const [stats,setStats]=useState({w:0,l:0,t:0});
+  const [risk,setRisk]=useState("orta");
+  const [focus,setFocus]=useState("BTCUSDT");
+  const [logs,setLogs]=useState([]);
+  const [lastUpd,setLastUpd]=useState(null);
+
+  const prR=useRef({}),hiR=useRef({});
+  const balR=useRef(10000),portR=useRef({}),trR=useRef([]),stR=useRef({w:0,l:0,t:0});
+  const botR=useRef(false),riskR=useRef("orta");
+  botR.current=botOn; riskR.current=risk;
+
+  const RP={
+    düşük:{pos:.04,sl:.012,tp:.035,minC:72,maxP:2},
+    orta: {pos:.07,sl:.022,tp:.065,minC:56,maxP:4},
+    yüksek:{pos:.12,sl:.04, tp:.11, minC:45,maxP:6}
+  };
+
+  const log=useCallback((msg,type="info")=>setLogs(p=>[{msg,type,t:new Date().toLocaleTimeString("tr-TR")},...p].slice(0,120)),[]);
+
+  function trade(pair,action,price,reason){
+    const p=RP[riskR.current];
+    if(action==="AL"&&balR.current>200&&!portR.current[pair]&&Object.keys(portR.current).length<p.maxP){
+      const inv=balR.current*p.pos;
+      portR.current={...portR.current,[pair]:{qty:inv/price,entry:price,inv,sl:price*(1-p.sl),tp:price*(1+p.tp)}};
+      balR.current-=inv;setPortfolio({...portR.current});setBalance(balR.current);
+      trR.current=[{id:Date.now(),pair,action:"AL",price,inv,reason,t:new Date().toLocaleTimeString("tr-TR")},...trR.current].slice(0,300);
+      setTrades([...trR.current]);
+      log("AL "+pair.replace("USDT","")+" @ $"+fp(price)+" | $"+inv.toFixed(0)+" yatırım","buy");
+    }
+    if(action==="SAT"&&portR.current[pair]){
+      const pos=portR.current[pair],rev=pos.qty*price,gain=rev-pos.inv;
+      const np={...portR.current};delete np[pair];
+      portR.current=np;balR.current+=rev;setPortfolio({...np});setBalance(balR.current);
+      setPnl(x=>x+gain);stR.current={w:stR.current.w+(gain>0?1:0),l:stR.current.l+(gain<=0?1:0),t:stR.current.t+1};
+      setStats({...stR.current});
+      trR.current=[{id:Date.now(),pair,action:"SAT",price,gain,reason,t:new Date().toLocaleTimeString("tr-TR")},...trR.current].slice(0,300);
+      setTrades([...trR.current]);
+      log((gain>=0?"💰 KAR ":"🔴 ZARAR ")+pair.replace("USDT","")+" "+(gain>=0?"+":"")+"$"+gain.toFixed(2),gain>=0?"win":"loss");
+    }
+  }
+
+  function runAnalysis(){
+    const nm=[];
+    PAIRS.forEach(p=>{
+      const pd=prR.current[p];if(!pd)return;
+      const h=hiR.current[p]||[];
+      const s=analyze(h,pd.price);
+      nm.push({pair:p,...pd,...s,hlen:h.length});
+    });
+    nm.sort((a,b)=>{if(a.action!=="BEKLE"&&b.action==="BEKLE")return-1;if(b.action!=="BEKLE"&&a.action==="BEKLE")return 1;return b.conf-a.conf;});
+    setSigs(Object.fromEntries(nm.map(d=>[d.pair,d])));setMarket(nm);
+    setPrices({...prR.current});setHists(Object.fromEntries(Object.entries(hiR.current).map(([k,v])=>[k,v.slice(-60)])));
+    setTickCount(c=>c+1);
+    if(botR.current){
+      Object.entries(portR.current).forEach(([pair,pos])=>{
+        const cur=prR.current[pair]?.price;if(!cur)return;
+        if(cur<=pos.sl)trade(pair,"SAT",cur,"⛔ Stop-Loss");
+        else if(cur>=pos.tp)trade(pair,"SAT",cur,"🎯 Kâr hedefi");
+      });
+      const pr=RP[riskR.current];
+      nm.filter(d=>d.action!=="BEKLE"&&d.conf>=pr.minC).forEach(opp=>{
+        const cur=prR.current[opp.pair]?.price;if(!cur)return;
+        if(opp.action==="AL"&&!portR.current[opp.pair])trade(opp.pair,"AL",cur,opp.strat);
+        if(opp.action==="SAT"&&portR.current[opp.pair])trade(opp.pair,"SAT",cur,opp.strat);
+      });
+    }
+  }
+
+  useEffect(()=>{
+    if(!proxyUrl)return;
+    let active=true,fails=0,firstOk=false,mainTimer=null,analysisTimer=null;
+
+    function doFetch(){
+      if(!active)return;
+      const xhr=new XMLHttpRequest();
+      xhr.timeout=15000;
+      xhr.open("GET",proxyUrl,true);
+      xhr.onreadystatechange=function(){
+        if(xhr.readyState!==4||!active)return;
+        if(xhr.status===200){
+          try{
+            const data=JSON.parse(xhr.responseText);
+            let got=0;
+            COINS.forEach(coin=>{
+              const d=data[coin.id];if(!d||!d.usd)return;
+              const price=d.usd,prev=prR.current[coin.pair]||{};
+              prR.current[coin.pair]={price,chg:d.usd_24h_change||0,high:d.usd_24h_high||Math.max(price,prev.high||price),low:d.usd_24h_low||Math.min(price,prev.low||price)};
+              hiR.current[coin.pair]=[...(hiR.current[coin.pair]||[]),price].slice(-300);
+              got++;
+            });
+            fails=0;
+            if(!firstOk&&got>0){
+              firstOk=true;setStatus("live");setStatusMsg("Proxy bağlı — "+got+" coin gerçek fiyat");
+              log("✅ Proxy bağlantısı başarılı — "+got+" coin izleniyor","info");
+              if(!analysisTimer)analysisTimer=setInterval(runAnalysis,8000);
+            }
+            if(got>0){runAnalysis();setLastUpd(new Date().toLocaleTimeString("tr-TR"));}
+          }catch(e){onFail("Parse hatası");}
+        }else if(xhr.status===429){
+          onFail("Rate limit — 30s bekleniyor");
+          clearInterval(mainTimer);mainTimer=setInterval(doFetch,30000);
+        }else{onFail("HTTP "+xhr.status);}
+      };
+      xhr.ontimeout=()=>{if(active)onFail("Timeout");};
+      xhr.onerror=()=>{if(active)onFail("Proxy'e ulaşılamıyor");};
+      xhr.send();
+    }
+
+    function onFail(msg){
+      fails++;setStatus(firstOk?"warn":"error");
+      setStatusMsg(msg+" (deneme "+fails+")");
+      if(fails<=3||fails%5===0)log("⚠ "+msg,"warn");
+    }
+
+    doFetch();mainTimer=setInterval(doFetch,15000);
+    return()=>{active=false;clearInterval(mainTimer);if(analysisTimer)clearInterval(analysisTimer);};
+  },[proxyUrl]);
+
+  if(!proxyUrl)return<SetupScreen onSave={url=>setProxyUrl(url)}/>;
+
+  const totalVal=balance+Object.entries(portfolio).reduce((s,[p,pos])=>s+pos.qty*(prices[p]?.price||pos.entry),0);
+  const ret=((totalVal/10000)-1)*100;
+  const wr=stats.t>0?Math.round(stats.w/stats.t*100):0;
+  const fSig=sigs[focus]||{},fPrice=prices[focus]||{},fHist=hists[focus]||[],fPos=portfolio[focus];
+  const stCol=status==="live"?"#22c55e":status==="warn"?"#f59e0b":"#ef4444";
+
+  const Box=({children,style={}})=><div style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:10,...style}}>{children}</div>;
+  const Lbl=({c})=><div style={{fontSize:9,color:"#2a4070",marginBottom:6}}>{c}</div>;
+  const Row=({l,v,c})=><div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:9}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c||"#94a3b8",fontWeight:700}}>{v}</span></div>;
+
+  return(
+  <div style={{background:"#04081a",minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+  <div style={{background:"#070c20",borderBottom:"1px solid #1a2a5e",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+    <div style={{display:"flex",alignItems:"center",gap:10}}>
+      <div style={{width:36,height:36,borderRadius:8,background:"#f0b90b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:900,color:"#000"}}>₿</div>
+      <div>
+        <div style={{fontSize:13,fontWeight:700,color:"#fff",letterSpacing:2}}>KRİPTO AI TRADER</div>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
+          <div style={{width:7,height:7,borderRadius:"50%",background:stCol}} className={status==="live"?"blink":""}/>
+          <span style={{fontSize:9,color:stCol,fontWeight:700}}>{statusMsg}</span>
+          {lastUpd&&<span style={{fontSize:9,color:"#1a3060",marginLeft:6}}>son: {lastUpd}</span>}
+          <button onClick={()=>setProxyUrl(null)} style={{marginLeft:8,fontSize:8,color:"#2a4070",background:"none",border:"1px solid #1a2a5e",borderRadius:3,padding:"1px 5px"}}>⚙ proxy</button>
+        </div>
+      </div>
+    </div>
+    <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center"}}>
+      {[["PORTFÖY","$"+totalVal.toFixed(2),ret>=0?"#22c55e":"#ef4444"],["BAKİYE","$"+balance.toFixed(2),"#38bdf8"],["GETİRİ",(ret>=0?"+":"")+ret.toFixed(2)+"%",ret>=0?"#22c55e":"#ef4444"],["WIN RATE",wr+"%",wr>=50?"#22c55e":"#f59e0b"],["İŞLEM",stats.t,"#94a3b8"]].map(([l,v,c])=>(
+        <div key={l} style={{textAlign:"center"}}><div style={{fontSize:8,color:"#2a4070",letterSpacing:1}}>{l}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{v}</div></div>
+      ))}
+    </div>
+    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+      {["düşük","orta","yüksek"].map(r=>{const c={düşük:"#22c55e",orta:"#f59e0b",yüksek:"#ef4444"}[r];return<button key={r} onClick={()=>setRisk(r)} style={{padding:"5px 9px",background:risk===r?c+"22":"#0a1228",border:`1px solid ${risk===r?c:"#1e3a5f"}`,borderRadius:6,color:risk===r?c:"#4a6fa5",fontSize:9,fontWeight:700}}>{r.toUpperCase()}</button>;})}
+      <button onClick={()=>{if(!botOn)log("🚀 Bot başlatıldı — Risk: "+risk.toUpperCase(),"info");else log("⏹ Bot durduruldu","warn");setBotOn(x=>!x);}} style={{padding:"8px 18px",background:botOn?"#7f1d1d":"#14532d",border:`1px solid ${botOn?"#ef4444":"#22c55e"}`,borderRadius:8,color:botOn?"#ef4444":"#22c55e",fontWeight:700,fontSize:12}}>
+        {botOn?"⏹ DURDUR":"▶ BAŞLAT"}
+      </button>
+    </div>
+  </div>
+
+  <div style={{display:"grid",gridTemplateColumns:"250px 1fr 260px",flex:1,overflow:"hidden"}}>
+    <div style={{borderRight:"1px solid #1a2a5e",padding:10,overflowY:"auto"}}>
+      <div style={{fontSize:9,color:"#2a4070",letterSpacing:2,marginBottom:8}}>📡 CANLI VERİ {tickCount>0&&<span style={{color:"#22c55e",marginLeft:6}}>● {tickCount} tick</span>}</div>
+      {market.length===0
+        ?<div style={{textAlign:"center",color:"#1a3060",padding:24}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{color:stCol,fontSize:11,lineHeight:1.7}}>{statusMsg}</div></div>
+        :market.map(d=>{const ac=AC[d.action]||"#6b7280",col=(d.chg||0)>=0?"#22c55e":"#ef4444",held=!!portfolio[d.pair],h=(hists[d.pair]||[]).slice(-40);return(
+          <div key={d.pair} onClick={()=>setFocus(d.pair)} style={{background:focus===d.pair?"#0d1f42":held?"#052010":"#080e24",border:`1px solid ${focus===d.pair?"#2a5a9e":held?"#22c55e33":d.action!=="BEKLE"?ac+"33":"#1a2a4e"}`,borderRadius:8,padding:"8px 9px",marginBottom:4,cursor:"pointer"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:4}}><span style={{color:"#fff",fontWeight:700}}>{d.pair.replace("USDT","")}</span><span style={{color:"#2a4070",fontSize:9}}>/USD</span>{held&&<span style={{fontSize:7,color:"#22c55e",marginLeft:2}}>●</span>}</div>
+              <span style={{padding:"2px 7px",borderRadius:4,fontSize:9,fontWeight:700,background:ac+"18",color:ac,border:`1px solid ${ac}44`}}>{d.action}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginTop:5}}>
+              <div><div style={{color:"#fff",fontWeight:700,fontSize:13}}>${d.price?fp(d.price):"—"}</div><div style={{color:col,fontSize:9}}>{((d.chg||0)>=0?"+":"")+((d.chg)||0).toFixed(2)}% (24s)</div></div>
+              <Spark data={h} color={col}/>
+              <div style={{textAlign:"right"}}><div style={{fontSize:8,color:"#2a4070"}}>GÜVEN</div><div style={{fontSize:13,fontWeight:700,color:ac}}>{d.conf||0}%</div><div style={{fontSize:7,color:"#1a3060"}}>{d.hlen} veri</div></div>
+            </div>
+            {d.action!=="BEKLE"&&<div style={{marginTop:4,fontSize:9,color:"#2a5040",padding:"2px 6px",background:"#020c08",borderRadius:3,borderLeft:`2px solid ${ac}`}}>{d.strat}</div>}
+          </div>
+        );})}
+    </div>
+
+    <div style={{padding:14,overflowY:"auto"}}>
+      <div style={{fontSize:9,color:"#2a4070",letterSpacing:2,marginBottom:10}}>🔬 AI TEKNİK ANALİZ — {focus}</div>
+      {fPrice.price&&fSig.ind?(
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+            <div>
+              <div style={{fontSize:22,fontWeight:700,color:"#fff"}}>{focus.replace("USDT","")}<span style={{color:"#2a4070",fontSize:13}}>/USD</span></div>
+              <div style={{color:"#4a6fa5",fontSize:10}}>{BY_PAIR[focus]?.name}</div>
+              <div style={{fontSize:26,color:"#f0b90b",fontWeight:700,marginTop:3}}>${fp(fPrice.price)}</div>
+              <div style={{fontSize:10,marginTop:3}}>
+                <span style={{color:(fPrice.chg||0)>=0?"#22c55e":"#ef4444",fontWeight:700}}>{(fPrice.chg>=0?"+":"")+((fPrice.chg)||0).toFixed(2)}% (24s)</span>
+                <span style={{color:"#2a4070",marginLeft:10}}>H: ${fp(fPrice.high||0)}</span>
+                <span style={{color:"#2a4070",marginLeft:8}}>L: ${fp(fPrice.low||0)}</span>
+              </div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <Gauge v={fSig.conf||0} action={fSig.action}/>
+              <div style={{marginTop:5,padding:"7px 16px",borderRadius:8,background:(AC[fSig.action]||"#6b7280")+"18",border:`1px solid ${(AC[fSig.action]||"#6b7280")}44`,color:AC[fSig.action]||"#6b7280",fontWeight:700,fontSize:14}}>
+                {fSig.action==="AL"?"🟢 AL SİNYALİ":fSig.action==="SAT"?"🔴 SAT SİNYALİ":"⏸ BEKLE"}
+              </div>
+              <div style={{fontSize:9,color:"#2a4070",marginTop:4}}>REJİM: <span style={{color:"#94a3b8"}}>{fSig.regime}</span> · SKOR: <span style={{color:"#f59e0b",fontWeight:700}}>{fSig.score>0?"+":""}{fSig.score}</span></div>
+            </div>
+          </div>
+          <Box style={{marginBottom:10}}><Lbl c="AI SEÇİLEN STRATEJİ"/><div style={{color:"#38bdf8",fontWeight:700}}>🤖 {fSig.strat}</div><div style={{fontSize:9,color:"#2a4070",marginTop:3}}>Vercel proxy üzerinden gerçek veri · {fHist.length} tick analiz edildi</div></Box>
+          {fPos&&(()=>{const cur=fPrice.price,upnl=fPos.qty*cur-fPos.inv,pct=(upnl/fPos.inv)*100;return<div style={{background:upnl>=0?"#021008":"#120305",border:`1px solid ${upnl>=0?"#22c55e33":"#ef444433"}`,borderRadius:8,padding:10,marginBottom:10}}><Lbl c="AKTİF POZİSYON"/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{[["Giriş","$"+fp(fPos.entry),""],["Stop","$"+fp(fPos.sl),"#ef4444"],["Hedef","$"+fp(fPos.tp),"#22c55e"],["Miktar",fPos.qty.toFixed(6),""],["Yatırım","$"+fPos.inv.toFixed(2),""],["G/Z",(upnl>=0?"+":"")+"$"+upnl.toFixed(2)+" ("+pct.toFixed(2)+"%)",upnl>=0?"#22c55e":"#ef4444"]].map(([l,v,c])=><div key={l} style={{background:"#050d20",borderRadius:5,padding:"5px 7px"}}><div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div><div style={{fontWeight:700,color:c||"#94a3b8",fontSize:11}}>{v}</div></div>)}</div></div>;})()}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+            <Box><Lbl c="RSI & STOCH RSI"/>{[[fSig.ind.r,"RSI(14)",35,65],[fSig.ind.sr.k,"StochRSI K",25,75]].map(([v,l,lo,hi])=>{const c=v<lo?"#22c55e":v>hi?"#ef4444":"#f59e0b";return<div key={l} style={{marginBottom:7}}><div style={{display:"flex",justifyContent:"space-between",fontSize:9,marginBottom:2}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c,fontWeight:700}}>{v.toFixed(1)}</span></div><div style={{background:"#0a1535",borderRadius:3,height:5}}><div style={{width:v+"%",height:"100%",background:c,borderRadius:3,transition:"width .4s"}}/></div></div>;})}</Box>
+            <Box><Lbl c="MACD (12,26,9)"/><Row l="MACD" v={fSig.ind.m.line.toFixed(6)}/><Row l="Sinyal" v={fSig.ind.m.sig.toFixed(6)}/><Row l="Histogram" v={fSig.ind.m.hist.toFixed(6)} c={fSig.ind.m.hist>=0?"#22c55e":"#ef4444"}/></Box>
+            <Box><Lbl c="BOLLINGER BANTLARI"/><Row l="Üst" v={"$"+fp(fSig.ind.b.u)} c="#ef4444"/><Row l="Orta" v={"$"+fp(fSig.ind.b.m)} c="#f59e0b"/><Row l="Alt" v={"$"+fp(fSig.ind.b.l)} c="#22c55e"/><div style={{fontSize:8,color:"#2a4070"}}>Genişlik: <span style={{color:fSig.ind.bw>4?"#ef4444":"#f59e0b"}}>{fSig.ind.bw.toFixed(2)}%</span></div></Box>
+            <Box><Lbl c="EMA (9/21/50)"/><Row l="EMA 9" v={"$"+fp(fSig.ind.e9)} c="#38bdf8"/><Row l="EMA 21" v={"$"+fp(fSig.ind.e21)} c="#38bdf8"/><Row l="EMA 50" v={"$"+fp(fSig.ind.e50)} c="#38bdf8"/><div style={{fontSize:8,color:fSig.ind.slope>=0?"#22c55e":"#ef4444"}}>Eğim: {fSig.ind.slope>=0?"▲":"▼"}{Math.abs(fSig.ind.slope).toFixed(3)}%</div></Box>
+            <Box style={{gridColumn:"1/-1"}}><Lbl c="OSİLATÖRLER"/><div style={{display:"flex",gap:24}}>{[["CCI(20)",fSig.ind.c.toFixed(1),fSig.ind.c<-100?"#22c55e":fSig.ind.c>100?"#ef4444":"#f59e0b"],["Veri",fHist.length,"#94a3b8"],["BB Genişliği",fSig.ind.bw.toFixed(2)+"%",fSig.ind.bw>4?"#ef4444":"#f59e0b"]].map(([l,v,c])=><div key={l}><div style={{fontSize:8,color:"#2a4070"}}>{l}</div><div style={{color:c,fontWeight:700,fontSize:14}}>{v}</div></div>)}</div></Box>
+          </div>
+          {fSig.reasons?.length>0&&<Box><Lbl c="SİNYAL GEREKÇELERİ"/>{fSig.reasons.map((r,i)=><div key={i} style={{fontSize:11,padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:4,borderLeft:`2px solid ${AC[fSig.action]||"#2a4070"}`,color:"#94a3b8"}}>{r}</div>)}</Box>}
+        </div>
+      ):<div style={{textAlign:"center",color:"#1a3060",paddingTop:60}}><div style={{fontSize:40,marginBottom:10}}>📊</div><div style={{color:stCol,fontSize:11}}>{status==="live"?"Sol panelden bir parite seçin":statusMsg}</div></div>}
+    </div>
+
+    <div style={{borderLeft:"1px solid #1a2a5e",padding:12,display:"flex",flexDirection:"column",gap:8,overflowY:"auto"}}>
+      <div style={{fontSize:9,color:"#2a4070",letterSpacing:2}}>📊 PERFORMANS</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
+        {[["Kâr/Zarar",(pnl>=0?"+":"")+"$"+pnl.toFixed(2),pnl>=0?"#22c55e":"#ef4444"],["Win Rate",wr+"%",wr>=50?"#22c55e":"#f59e0b"],["Kazanan",stats.w,"#22c55e"],["Kaybeden",stats.l,"#ef4444"],["Açık Poz.",Object.keys(portfolio).length,"#f59e0b"],["Toplam",stats.t,"#94a3b8"]].map(([l,v,c])=>(
+          <div key={l} style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:6,padding:"6px 8px"}}><div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{v}</div></div>
+        ))}
+      </div>
+      {Object.keys(portfolio).length>0&&<><div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>AKTİF POZİSYONLAR</div>{Object.entries(portfolio).map(([pair,pos])=>{const cur=prices[pair]?.price||pos.entry,upnl=pos.qty*cur-pos.inv;return<div key={pair} onClick={()=>setFocus(pair)} style={{background:upnl>=0?"#021008":"#120305",border:`1px solid ${upnl>=0?"#22c55e44":"#ef444444"}`,borderRadius:6,padding:"6px 8px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700,color:"#fff",fontSize:11}}>{pair.replace("USDT","")}</span><span style={{color:upnl>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:11}}>{upnl>=0?"+":""}${upnl.toFixed(2)}</span></div><div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4070",marginTop:2}}><span>SL: ${fp(pos.sl)}</span><span>TP: ${fp(pos.tp)}</span></div></div>;})}</>}
+      <div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>SON İŞLEMLER</div>
+      <div style={{flex:1,overflowY:"auto",minHeight:60}}>
+        {trades.length===0?<div style={{color:"#1a3060",textAlign:"center",padding:12,fontSize:10}}>Bot başladığında işlemler görünecek</div>
+        :trades.slice(0,50).map(t=><div key={t.id} style={{background:t.action==="AL"?"#020c08":t.gain>=0?"#020c08":"#0c0205",borderLeft:`3px solid ${t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444"}`,borderRadius:4,padding:"5px 7px",marginBottom:3}}>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700,color:t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444",fontSize:11}}>{t.action==="AL"?"↑":"↓"} {t.pair.replace("USDT","")}</span><span style={{color:"#1a3060",fontSize:8}}>{t.t}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}><span style={{color:"#4a6fa5",fontSize:9}}>${fp(t.price)}</span>{t.gain!=null&&<span style={{color:t.gain>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:9}}>{t.gain>=0?"+":""}${t.gain.toFixed(2)}</span>}</div>
+          {t.reason&&<div style={{color:"#1a3060",fontSize:7,marginTop:1}}>{t.reason}</div>}
+        </div>)}
+      </div>
+      <div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>CANLI LOG</div>
+      <div style={{background:"#020610",border:"1px solid #1a2a5e",borderRadius:8,padding:8,height:150,overflowY:"auto"}}>
+        {logs.length===0?<div style={{color:"#1a3060",fontSize:9}}>Bekleniyor...</div>
+        :logs.map((l,i)=><div key={i} style={{marginBottom:2,fontSize:9,color:l.type==="buy"?"#22c55e":l.type==="win"?"#4ade80":l.type==="loss"?"#ef4444":l.type==="warn"?"#f59e0b":"#2a4070"}}><span style={{color:"#1a3060"}}>[{l.t}]</span> {l.msg}</div>)}
+      </div>
+      <div style={{background:"#05080f",border:"1px solid #0f1a3a",borderRadius:6,padding:7,fontSize:8,color:"#1a3060",lineHeight:1.9}}>
+        <span style={{color:"#22c55e"}}>✅ VERİ</span> Vercel proxy → CoinGecko<br/>
+        <span style={{color:"#f59e0b"}}>🛡 MOD</span> Simülasyon — gerçek para yok<br/>
+        <span style={{color:"#38bdf8"}}>🤖 AI</span> 7 gösterge · Otomatik strateji
+      </div>
+    </div>
+  </div>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
