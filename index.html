@@ -72,7 +72,7 @@ function detectRegime(hist){
 function dynLevels(price,hist,riskLevel){
   const at=atr(hist,14);
   const regime=detectRegime(hist);
-  const mult={düşük:{sl:1.5,tp:3.0},orta:{sl:2.0,tp:4.0},yüksek:{sl:2.5,tp:6.0}}[riskLevel]||{sl:2.0,tp:4.0};
+  const mult={düşük:{sl:2.5,tp:4.0},orta:{sl:3.0,tp:5.5},yüksek:{sl:3.5,tp:8.0}}[riskLevel]||{sl:3.0,tp:5.5};
   const slM=regime.type==="volatile"?mult.sl*1.4:mult.sl;
   const tpM=regime.type==="bull"?mult.tp*1.2:regime.type==="bear"?mult.tp*0.8:mult.tp;
   return{sl:price*(1-slM*at/price),tp:price*(1+tpM*at/price),at,atPct:at/price*100,slPct:slM*at/price*100,tpPct:tpM*at/price*100,regime};
@@ -166,11 +166,56 @@ function analyze(hist,price){
   if(slope>1.5){score+=1;reasons.push("🚀 Güçlü yukarı ivme +"+slope.toFixed(2)+"%");}
   else if(slope<-1.5){score-=1;reasons.push("🌊 Güçlü aşağı ivme "+slope.toFixed(2)+"%");}
 
+  // Çoklu öncü sinyal onayı
+  const leadingConfirm = bullDiv || accum || atFibSup;   // AL için öncü onay
+  const leadingDeny    = bearDiv || distrib || atFibRes; // SAT için öncü onay
   const conf=Math.min(99,Math.round(Math.abs(score)*10+10));
-  const action=score>=4?"AL":score<=-4?"SAT":"BEKLE";
+  // AL: score yüksek VE en az 1 öncü sinyal onayı
+  // SAT: score düşük VE en az 1 öncü sinyal onayı  
+  let action="BEKLE";
+  if(score>=6 && leadingConfirm)  action="AL";
+  else if(score<=-6 && leadingDeny) action="SAT";
+  else if(score>=8)  action="AL";   // çok güçlü sinyal — öncü onay olmasa da al
+  else if(score<=-8) action="SAT";
   return{action,score,conf,reasons,strat,regime:trending?"TREND":"YATAY",
     ind:{r,m,b,e9,e21,e50,sr,c,slope,bw:b.bw},
     lead:{vSpike,accum,distrib,bullDiv,bearDiv,nearFib,atFibSup,atFibRes,fibs,fibLbls,fHi,fLo}};
+}
+
+// ─── Optimizasyon Tarayıcısı ─────────────────────────────────────────────────
+function runOptimizer(hist){
+  if(hist.length<60)return[];
+  const results=[];
+  // Farklı score eşiklerini test et
+  const thresholds=[4,5,6,7,8];
+  const slMults=[1.5,2.0,2.5,3.0,3.5];
+  thresholds.forEach(thr=>{
+    slMults.forEach(slM=>{
+      const tpM=slM*1.8; // TP her zaman SL'nin 1.8 katı
+      let bal=10000,pos=null,wins=0,losses=0,trades=0;
+      for(let i=50;i<hist.length;i++){
+        const slice=hist.slice(0,i),price=hist[i];
+        const sig=analyze(slice,price);
+        if(pos){
+          const at=atr(slice,14);
+          const sl=pos.entry*(1-slM*at/pos.entry);
+          const tp=pos.entry*(1+tpM*at/pos.entry);
+          if(price<=sl){const g=pos.qty*price-pos.inv;bal+=pos.qty*price;losses++;trades++;pos=null;}
+          else if(price>=tp){const g=pos.qty*price-pos.inv;bal+=pos.qty*price;wins++;trades++;pos=null;}
+        }
+        if(!pos&&sig.action==="AL"&&sig.score>=thr&&bal>200){
+          const inv=bal*0.07;
+          pos={qty:inv/price,entry:price,inv};
+          bal-=inv;
+        }
+      }
+      if(pos){bal+=pos.qty*hist[hist.length-1];trades++;}
+      const wr=trades>0?Math.round(wins/trades*100):0;
+      const ret=((bal/10000)-1)*100;
+      results.push({thr,slM:slM.toFixed(1),tpM:tpM.toFixed(1),wr,ret:ret.toFixed(1),trades,wins,losses});
+    });
+  });
+  return results.sort((a,b)=>b.wr-a.wr).slice(0,10);
 }
 
 // ─── Backtesting ──────────────────────────────────────────────────────────────
@@ -190,7 +235,7 @@ function runBacktest(hist,riskLevel){
         pos=null;
       }
     }
-    if(!pos&&sig.action==="AL"&&sig.score>=4&&bal>200){
+    if(!pos&&sig.action==="AL"&&sig.score>=6&&bal>200){
       const inv=bal*p.pos;
       const dl=dynLevels(price,slice,riskLevel);
       pos={qty:inv/price,entry:price,inv,sl:dl.sl,tp:dl.tp};
@@ -314,6 +359,8 @@ function App(){
   const [lastUpd,setLastUpd]=useState(null);
   const [tab,setTab]=useState("analiz");
   const [btResult,setBtResult]=useState(null);
+  const [optResult,setOptResult]=useState(null);
+  const [optRunning,setOptRunning]=useState(false);
   const [btRunning,setBtRunning]=useState(false);
 
   const prR=useRef({}),hiR=useRef({});
@@ -576,6 +623,42 @@ function App(){
                   </div>
                 ))}</div></Box>
                 <div style={{marginTop:10,fontSize:9,color:"#1a3060",padding:"6px 10px",background:"#050810",borderRadius:6}}>⚠️ Geçmiş performans gelecek sonuçları garanti etmez. Backtest spread/komisyon içermez.</div>
+
+                {/* Optimizasyon Tarayıcısı */}
+                <div style={{marginTop:14}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                    <div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>🔍 OPTİMİZASYON TARAYICISI</div>
+                    <button onClick={()=>{
+                      const h=hists[focus];if(!h||h.length<60)return;
+                      setOptRunning(true);setOptResult(null);
+                      setTimeout(()=>{setOptResult(runOptimizer(h));setOptRunning(false);},200);
+                    }} style={{padding:"5px 14px",background:"#0a1535",border:"1px solid #38bdf8",borderRadius:6,color:"#38bdf8",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
+                      {optRunning?"Taranıyor...":"▶ En İyi Parametreleri Bul"}
+                    </button>
+                  </div>
+                  {optRunning&&<div style={{textAlign:"center",padding:16,color:"#38bdf8",fontSize:11}}>25 farklı parametre kombinasyonu test ediliyor...</div>}
+                  {optResult&&<div>
+                    <div style={{fontSize:9,color:"#22c55e",marginBottom:8}}>✅ En yüksek win rate veren TOP 10 parametre kombinasyonu:</div>
+                    <div style={{background:"#050d20",borderRadius:8,overflow:"hidden"}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr 1fr",padding:"6px 10px",borderBottom:"1px solid #1a2a5e",fontSize:8,color:"#2a4070"}}>
+                        <span>Score Eşik</span><span>SL ATR×</span><span>TP ATR×</span><span style={{color:"#22c55e",fontWeight:700}}>Win Rate</span><span>Getiri</span><span>İşlem</span>
+                      </div>
+                      {optResult.map((r,i)=>(
+                        <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr 1fr",padding:"5px 10px",borderBottom:"1px solid #0a1228",fontSize:10,background:i===0?"#022010":"transparent"}}>
+                          <span style={{color:"#94a3b8"}}>≥ {r.thr}</span>
+                          <span style={{color:"#94a3b8"}}>{r.slM}×</span>
+                          <span style={{color:"#94a3b8"}}>{r.tpM}×</span>
+                          <span style={{color:r.wr>=70?"#22c55e":r.wr>=50?"#f59e0b":"#ef4444",fontWeight:700}}>{r.wr}%{i===0?" 🏆":""}</span>
+                          <span style={{color:parseFloat(r.ret)>=0?"#22c55e":"#ef4444"}}>{r.ret>=0?"+":""}{r.ret}%</span>
+                          <span style={{color:"#4a6fa5"}}>{r.trades}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{marginTop:8,fontSize:9,color:"#2a4070",padding:"5px 8px",background:"#050810",borderRadius:4}}>
+                      🏆 En iyi kombinasyonu uygulamak için yukarıdaki Score Eşiği ve ATR değerlerini not alın.
+                    </div>
+                  </div>}
+                </div>
               </div>
         )}
 
