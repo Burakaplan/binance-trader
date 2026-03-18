@@ -127,7 +127,7 @@ function SetupScreen({onSave}){
           <div><div style={{fontSize:15,fontWeight:700,color:"#fff"}}>KRİPTO AI TRADER</div><div style={{fontSize:10,color:"#2a4070"}}>Vercel Proxy URL — 7 Günlük Geçmiş Veri</div></div>
         </div>
         <div style={{background:"#0a1535",border:"1px solid #1a3060",borderRadius:8,padding:10,marginBottom:14,fontSize:11,color:"#6a8ab0",lineHeight:1.7}}>
-          <span style={{color:"#22c55e",fontWeight:700}}>YENİ:</span> Anlık fiyatlar artık <span style={{color:"#38bdf8"}}>CoinCap WebSocket</span> üzerinden geliyor (~1 saniye). Proxy sadece 7 günlük geçmiş veri için kullanılıyor.
+          Proxy hem 7 günlük geçmiş veri hem de her 10 saniyede bir anlık fiyat güncellemesi için kullanılıyor. <span style={{color:"#22c55e"}}>Türkiye'den sorunsuz çalışır.</span>
         </div>
         <div style={{marginBottom:12}}>
           <div style={{fontSize:10,color:"#2a4070",marginBottom:6}}>PROXY URL</div>
@@ -284,62 +284,73 @@ function App(){
     });
   },[proxyUrl]);
 
-  // ── ADIM 2: CoinCap WebSocket → gerçek zamanlı anlık fiyatlar ─────────────
+  // ── ADIM 2: Proxy polling → 10 saniyede bir anlık fiyat güncelleme ──────────
   useEffect(()=>{
-    let ws,reconnTimer,active=true,connectedOnce=false;
+    if(!proxyUrl)return;
+    let active=true,fails=0,firstOk=false,timer=null;
 
-    // PPS sayacı
+    // PPS sayacı (her saniye sıfırla)
     const ppsTimer=setInterval(()=>{setPps(ppsCountR.current);ppsCountR.current=0;},1000);
 
-    function connect(){
-      setWsStatus("connecting");
-      try{ ws=new WebSocket("wss://ws.coincap.io/prices?assets="+CC_IDS); }
-      catch(e){scheduleReconnect();return;}
-
-      ws.onopen=()=>{
-        if(!active)return;
-        connectedOnce=true;
-        setWsStatus("live");
-        setStatusMsg("CoinCap CANLI + Proxy 7G geçmiş");
-        log("⚡ CoinCap WebSocket bağlandı — gerçek zamanlı fiyatlar akıyor","info");
+    function fetchLive(){
+      if(!active)return;
+      const xhr=new XMLHttpRequest();
+      xhr.timeout=10000;
+      xhr.open("GET",proxyUrl,true);
+      xhr.onreadystatechange=function(){
+        if(xhr.readyState!==4||!active)return;
+        if(xhr.status===200){
+          try{
+            const data=JSON.parse(xhr.responseText);
+            let got=0;
+            COINS.forEach(coin=>{
+              const d=data[coin.cg];if(!d||!d.usd)return;
+              const price=d.usd,prev=prR.current[coin.pair]||{};
+              prR.current[coin.pair]={
+                price,
+                chg:d.usd_24h_change||prev.chg||0,
+                high:d.usd_24h_high||Math.max(price,prev.high||price),
+                low:d.usd_24h_low||Math.min(price,prev.low||price),
+              };
+              const h=hiR.current[coin.pair]||[];
+              if(!h.length||price!==h[h.length-1])
+                hiR.current[coin.pair]=[...h,price].slice(-500);
+              ppsCountR.current++;
+              got++;
+            });
+            fails=0;
+            if(!firstOk&&got>0){
+              firstOk=true;
+              setWsStatus("live");
+              setStatusMsg("Proxy canlı — "+got+" coin | 10s güncelleme");
+              log("✅ Canlı veri aktif — "+got+" coin, 10 saniyede bir güncelleniyor","info");
+            }
+            if(got>0) scheduleAnalysis();
+          }catch(e){onFail("Parse: "+e.message);}
+        } else if(xhr.status===429){
+          onFail("Rate limit — 30s bekleniyor");
+          clearInterval(timer);
+          timer=setInterval(fetchLive,30000);
+        } else { onFail("HTTP "+xhr.status); }
       };
-
-      ws.onmessage=e=>{
-        if(!active)return;
-        try{
-          const data=JSON.parse(e.data);
-          Object.entries(data).forEach(([ccId,priceStr])=>{
-            const coin=BY_CC[ccId];if(!coin)return;
-            const price=parseFloat(priceStr);if(!price||isNaN(price))return;
-            const prev=prR.current[coin.pair]||{};
-            prR.current[coin.pair]={
-              price,
-              chg:prev.price?((price-prev.price)/prev.price)*100:(prev.chg||0),
-              high:Math.max(price,prev.high||price),
-              low:Math.min(price,prev.low||price),
-            };
-            const h=hiR.current[coin.pair]||[];
-            if(!h.length||price!==h[h.length-1])
-              hiR.current[coin.pair]=[...h,price].slice(-500);
-            ppsCountR.current++;
-          });
-          scheduleAnalysis();
-        }catch(_){}
-      };
-
-      ws.onerror=()=>{setWsStatus("error");};
-      ws.onclose=()=>{
-        if(!active)return;
-        setWsStatus("error");
-        setStatusMsg(connectedOnce?"WS kesildi — 5s sonra tekrar...":"CoinCap bağlanamadı — tekrar deniyor...");
-        scheduleReconnect();
-      };
+      xhr.ontimeout=()=>{if(active)onFail("Timeout");};
+      xhr.onerror=()=>{if(active)onFail("Ağ hatası");};
+      xhr.send();
     }
 
-    function scheduleReconnect(){clearTimeout(reconnTimer);reconnTimer=setTimeout(connect,5000);}
-    connect();
-    return()=>{active=false;clearTimeout(reconnTimer);clearInterval(ppsTimer);if(throttleRef.current)clearTimeout(throttleRef.current);try{ws&&ws.close();}catch(_){}};
-  },[]);
+    function onFail(msg){
+      fails++;
+      if(fails<=3||fails%5===0){
+        setWsStatus(firstOk?"warn":"error");
+        setStatusMsg(msg+" (deneme "+fails+")");
+        log("⚠ "+msg,"warn");
+      }
+    }
+
+    fetchLive();
+    timer=setInterval(fetchLive,10000);
+    return()=>{active=false;clearInterval(timer);clearInterval(ppsTimer);if(throttleRef.current)clearTimeout(throttleRef.current);};
+  },[proxyUrl]);
 
   if(!proxyUrl)return<SetupScreen onSave={url=>{localStorage.setItem("proxyUrl",url);setProxyUrl(url);}}/>;
 
@@ -376,7 +387,7 @@ function App(){
         <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
           <div style={{width:7,height:7,borderRadius:"50%",background:wsCol,boxShadow:`0 0 6px ${wsCol}`}} className={wsStatus==="live"?"blink":""}/>
           <span style={{fontSize:9,color:wsCol,fontWeight:700}}>
-            {wsStatus==="live"?"⚡ CANLI":wsStatus==="error"?"❌ BAĞLANTI YOK":"⏳ BAĞLANIYOR"}
+            {wsStatus==="live"?"✅ CANLI":wsStatus==="warn"?"⚠ YAVAŞ":wsStatus==="error"?"❌ BAĞLANTI YOK":"⏳ BAĞLANIYOR"}
           </span>
           {wsStatus==="live"&&<span style={{fontSize:9,color:"#2a4070"}}>| {pps} fiyat/sn | {tickCount} analiz</span>}
           {proxyStatus==="ok"&&<span style={{fontSize:9,color:"#38bdf8",marginLeft:4}}>| 7G geçmiş ✓</span>}
@@ -403,7 +414,7 @@ function App(){
     {/* SOL */}
     <div style={{borderRight:"1px solid #1a2a5e",padding:10,overflowY:"auto"}}>
       <div style={{fontSize:9,color:"#2a4070",letterSpacing:2,marginBottom:8}}>
-        ⚡ COINCAP GERÇEK ZAMANLI {wsStatus==="live"&&<span style={{color:"#22c55e"}}>● CANLI</span>}
+        CANLI VERİ {wsStatus==="live"&&<span style={{color:"#22c55e",marginLeft:6}}>● {tickCount} güncelleme</span>}
       </div>
       {market.length===0
         ?<div style={{textAlign:"center",color:"#1a3060",padding:24}}><div style={{fontSize:28,marginBottom:8}}>📡</div><div style={{color:wsCol,fontSize:11,lineHeight:1.7}}>{wsStatus==="live"?"Geçmiş veri yükleniyor...":"CoinCap WebSocket bağlanıyor..."}</div></div>
@@ -459,7 +470,7 @@ function App(){
             <Lbl c="AI SEÇİLEN STRATEJİ"/>
             <div style={{color:"#38bdf8",fontWeight:700}}>🤖 {fSig.strat}</div>
             <div style={{fontSize:9,color:"#2a4070",marginTop:3}}>
-              ⚡ CoinCap gerçek zamanlı · 📊 7G proxy geçmiş · {fHist.length} toplam veri · {pps} fiyat/sn
+              ✅ Proxy canlı veri · 📊 7G geçmiş · {fHist.length} toplam veri
             </div>
           </Box>
 
@@ -476,7 +487,7 @@ function App(){
 
           {fSig.reasons?.length>0&&<Box><Lbl c="SİNYAL GEREKÇELERİ"/>{fSig.reasons.map((r,i)=><div key={i} style={{fontSize:11,padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:4,borderLeft:`2px solid ${AC[fSig.action]||"#2a4070"}`,color:"#94a3b8"}}>{r}</div>)}</Box>}
         </div>
-      ):<div style={{textAlign:"center",color:"#1a3060",paddingTop:60}}><div style={{fontSize:40,marginBottom:10}}>⚡</div><div style={{color:wsCol,fontSize:11}}>{wsStatus==="live"?"Sol panelden bir parite seçin":"CoinCap bağlanıyor..."}</div></div>}
+      ):<div style={{textAlign:"center",color:"#1a3060",paddingTop:60}}><div style={{fontSize:40,marginBottom:10}}>⚡</div><div style={{color:wsCol,fontSize:11}}>{wsStatus==="live"?"Sol panelden bir parite seçin":"Proxy bağlantısı kuruluyor..."}</div></div>}
     </div>
 
     {/* SAĞ */}
@@ -503,8 +514,8 @@ function App(){
         :logs.map((l,i)=><div key={i} style={{marginBottom:2,fontSize:9,color:l.type==="buy"?"#22c55e":l.type==="win"?"#4ade80":l.type==="loss"?"#ef4444":l.type==="warn"?"#f59e0b":"#2a4070"}}><span style={{color:"#1a3060"}}>[{l.t}]</span> {l.msg}</div>)}
       </div>
       <div style={{background:"#05080f",border:"1px solid #0f1a3a",borderRadius:6,padding:7,fontSize:8,color:"#1a3060",lineHeight:1.9}}>
-        <span style={{color:"#22c55e"}}>⚡ CANLI</span> CoinCap WebSocket (~1s)<br/>
-        <span style={{color:"#38bdf8"}}>📊 GEÇMİŞ</span> Vercel Proxy → 7G saatlik<br/>
+        <span style={{color:"#22c55e"}}>✅ CANLI</span> Proxy polling (10s)<br/>
+        <span style={{color:"#38bdf8"}}>📊 GEÇMİŞ</span> Proxy → 7G saatlik<br/>
         <span style={{color:"#f59e0b"}}>🛡 MOD</span> Simülasyon — gerçek para yok<br/>
         <span style={{color:"#94a3b8"}}>🤖 AI</span> 7 gösterge · Saniyede analiz
       </div>
