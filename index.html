@@ -23,94 +23,119 @@ input{font-family:inherit}
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback}=React;
 
-// ── CoinGecko ID (proxy için) + CoinCap ID (WebSocket için) ──────────────────
 const COINS=[
-  {cg:"bitcoin",       cc:"bitcoin",       pair:"BTCUSDT", name:"Bitcoin"},
-  {cg:"ethereum",      cc:"ethereum",      pair:"ETHUSDT", name:"Ethereum"},
-  {cg:"binancecoin",   cc:"binance-coin",  pair:"BNBUSDT", name:"BNB"},
-  {cg:"solana",        cc:"solana",        pair:"SOLUSDT", name:"Solana"},
-  {cg:"ripple",        cc:"xrp",           pair:"XRPUSDT", name:"XRP"},
-  {cg:"cardano",       cc:"cardano",       pair:"ADAUSDT", name:"Cardano"},
-  {cg:"dogecoin",      cc:"dogecoin",      pair:"DOGEUSDT",name:"Dogecoin"},
-  {cg:"avalanche-2",   cc:"avalanche",     pair:"AVAXUSDT",name:"Avalanche"},
-  {cg:"matic-network", cc:"polygon",       pair:"MATICUSDT",name:"Polygon"},
-  {cg:"chainlink",     cc:"chainlink",     pair:"LINKUSDT",name:"Chainlink"},
-  {cg:"polkadot",      cc:"polkadot",      pair:"DOTUSDT", name:"Polkadot"},
-  {cg:"litecoin",      cc:"litecoin",      pair:"LTCUSDT", name:"Litecoin"},
-  {cg:"cosmos",        cc:"cosmos",        pair:"ATOMUSDT",name:"Cosmos"},
-  {cg:"uniswap",       cc:"uniswap",       pair:"UNIUSDT", name:"Uniswap"},
+  {cg:"bitcoin",       cc:"bitcoin",      pair:"BTCUSDT", name:"Bitcoin"},
+  {cg:"ethereum",      cc:"ethereum",     pair:"ETHUSDT", name:"Ethereum"},
+  {cg:"binancecoin",   cc:"binance-coin", pair:"BNBUSDT", name:"BNB"},
+  {cg:"solana",        cc:"solana",       pair:"SOLUSDT", name:"Solana"},
+  {cg:"ripple",        cc:"xrp",          pair:"XRPUSDT", name:"XRP"},
+  {cg:"cardano",       cc:"cardano",      pair:"ADAUSDT", name:"Cardano"},
+  {cg:"dogecoin",      cc:"dogecoin",     pair:"DOGEUSDT",name:"Dogecoin"},
+  {cg:"avalanche-2",   cc:"avalanche",    pair:"AVAXUSDT",name:"Avalanche"},
+  {cg:"matic-network", cc:"polygon",      pair:"MATICUSDT",name:"Polygon"},
+  {cg:"chainlink",     cc:"chainlink",    pair:"LINKUSDT",name:"Chainlink"},
+  {cg:"polkadot",      cc:"polkadot",     pair:"DOTUSDT", name:"Polkadot"},
+  {cg:"litecoin",      cc:"litecoin",     pair:"LTCUSDT", name:"Litecoin"},
+  {cg:"cosmos",        cc:"cosmos",       pair:"ATOMUSDT",name:"Cosmos"},
+  {cg:"uniswap",       cc:"uniswap",      pair:"UNIUSDT", name:"Uniswap"},
 ];
 const PAIRS=COINS.map(c=>c.pair);
-const BY_CC=Object.fromEntries(COINS.map(c=>[c.cc,c]));
 const BY_PAIR=Object.fromEntries(COINS.map(c=>[c.pair,c]));
 const CG_IDS=COINS.map(c=>c.cg).join(",");
-const CC_IDS=COINS.map(c=>c.cc).join(",");
 
-// ── Göstergeler ───────────────────────────────────────────────────────────────
-const ema=(a,p)=>{if(a.length<p)return a[a.length-1]||0;const k=2/(p+1);let e=a.slice(0,p).reduce((x,y)=>x+y,0)/p;for(let i=p;i<a.length;i++)e=a[i]*k+e*(1-k);return e;};
-const rsi=(a,p=14)=>{if(a.length<p+1)return 50;let g=0,l=0;for(let i=a.length-p;i<a.length;i++){const d=a[i]-a[i-1];d>0?g+=d:l+=Math.abs(d);}return 100-100/(1+g/(l||1e-9));};
-const macd=(a)=>{const f=ema(a,12),s=ema(a,26),ln=f-s,sl=ema(a.slice(-9).map((_,i)=>ema(a.slice(0,a.length-8+i),12)-ema(a.slice(0,a.length-8+i),26)),9);return{line:ln,sig:sl,hist:ln-sl};};
-const boll=(a,p=20)=>{if(a.length<p){const v=a[a.length-1]||0;return{u:v*1.02,m:v,l:v*.98,bw:2};}const sl=a.slice(-p),m=sl.reduce((x,y)=>x+y,0)/p,sd=Math.sqrt(sl.reduce((x,y)=>x+(y-m)**2,0)/p);return{u:m+2*sd,m,l:m-2*sd,bw:4*sd/m*100};};
-const srsi=(a,p=14)=>{if(a.length<p*2)return{k:50};const rv=[];for(let i=p;i<=a.length;i++)rv.push(rsi(a.slice(i-p-1,i)));const rc=rv.slice(-p),mn=Math.min(...rc),mx=Math.max(...rc);return{k:Math.max(0,Math.min(100,mx===mn?50:(rv[rv.length-1]-mn)/(mx-mn)*100))};};
-const cci_=(a,p=20)=>{if(a.length<p)return 0;const sl=a.slice(-p),m=sl.reduce((x,y)=>x+y,0)/p,mad=sl.reduce((x,y)=>x+Math.abs(y-m),0)/p;return mad===0?0:(a[a.length-1]-m)/(0.015*mad);};
+// ─── Teknik Göstergeler ───────────────────────────────────────────────────────
+function ema(a,p){if(a.length<p)return a[a.length-1]||0;const k=2/(p+1);let e=a.slice(0,p).reduce((x,y)=>x+y,0)/p;for(let i=p;i<a.length;i++)e=a[i]*k+e*(1-k);return e;}
+function rsi(a,p=14){if(a.length<p+1)return 50;let g=0,l=0;for(let i=a.length-p;i<a.length;i++){const d=a[i]-a[i-1];d>0?g+=d:l+=Math.abs(d);}return 100-100/(1+g/(l||1e-9));}
+function macd(a){const f=ema(a,12),s=ema(a,26),ln=f-s,sl=ema(a.slice(-9).map((_,i)=>ema(a.slice(0,a.length-8+i),12)-ema(a.slice(0,a.length-8+i),26)),9);return{line:ln,sig:sl,hist:ln-sl};}
+function boll(a,p=20){if(a.length<p){const v=a[a.length-1]||0;return{u:v*1.02,m:v,l:v*.98,bw:2};}const sl=a.slice(-p),m=sl.reduce((x,y)=>x+y,0)/p,sd=Math.sqrt(sl.reduce((x,y)=>x+(y-m)**2,0)/p);return{u:m+2*sd,m,l:m-2*sd,bw:4*sd/m*100};}
+function srsi(a,p=14){if(a.length<p*2)return{k:50};const rv=[];for(let i=p;i<=a.length;i++)rv.push(rsi(a.slice(i-p-1,i)));const rc=rv.slice(-p),mn=Math.min(...rc),mx=Math.max(...rc);return{k:Math.max(0,Math.min(100,mx===mn?50:(rv[rv.length-1]-mn)/(mx-mn)*100))};}
+function cci(a,p=20){if(a.length<p)return 0;const sl=a.slice(-p),m=sl.reduce((x,y)=>x+y,0)/p,mad=sl.reduce((x,y)=>x+Math.abs(y-m),0)/p;return mad===0?0:(a[a.length-1]-m)/(0.015*mad);}
+function atr(a,p=14){if(a.length<p+1)return(a[a.length-1]||1)*0.015;return a.slice(-p-1).map((v,i,arr)=>i===0?0:Math.abs(v-arr[i-1])).slice(1).reduce((x,y)=>x+y,0)/p;}
 
+// ─── Piyasa Rejimi ────────────────────────────────────────────────────────────
+function detectRegime(hist){
+  if(hist.length<50)return{type:"unknown",label:"Bilinmiyor",color:"#6b7280",desc:""};
+  const e20=ema(hist,20),e50=ema(hist.slice(-60),50);
+  const price=hist[hist.length-1];
+  const atr14=atr(hist,14);
+  const atrPct=atr14/price*100;
+  const slope20=((price-hist[hist.length-21])/hist[hist.length-21])*100;
+  const bb20=boll(hist,20);
+  if(bb20.bw<1.5)return{type:"squeeze",label:"SIKIŞMA",color:"#f59e0b",desc:"Büyük hareket yaklaşıyor — yön bekleniyor"};
+  if(atrPct>3&&bb20.bw>6)return{type:"volatile",label:"VOLATİL",color:"#ef4444",desc:"Aşırı volatilite — stop-loss geniş tut"};
+  if(e20>e50&&slope20>1)return{type:"bull",label:"YÜKSELİŞ",color:"#22c55e",desc:"Trend yukarı — AL sinyalleri güvenilir"};
+  if(e20<e50&&slope20<-1)return{type:"bear",label:"DÜŞÜŞ",color:"#ef4444",desc:"Trend aşağı — SAT sinyalleri güvenilir"};
+  return{type:"range",label:"YATAY",color:"#38bdf8",desc:"Yatay piyasa — RSI+BB stratejisi çalışır"};
+}
+
+// ─── Dinamik SL/TP ────────────────────────────────────────────────────────────
+function dynLevels(price,hist,riskLevel){
+  const at=atr(hist,14);
+  const regime=detectRegime(hist);
+  const mult={düşük:{sl:1.5,tp:3.0},orta:{sl:2.0,tp:4.0},yüksek:{sl:2.5,tp:6.0}}[riskLevel]||{sl:2.0,tp:4.0};
+  const slM=regime.type==="volatile"?mult.sl*1.4:mult.sl;
+  const tpM=regime.type==="bull"?mult.tp*1.2:regime.type==="bear"?mult.tp*0.8:mult.tp;
+  return{sl:price*(1-slM*at/price),tp:price*(1+tpM*at/price),at,atPct:at/price*100,slPct:slM*at/price*100,tpPct:tpM*at/price*100,regime};
+}
+
+// ─── Multi-Timeframe ──────────────────────────────────────────────────────────
+function mtfAnalysis(hist){
+  if(hist.length<48)return{h1:"—",h4:"—",d1:"—",align:0,label:"Yetersiz veri"};
+  const r1h=rsi(hist.slice(-15));
+  const h4=hist.filter((_,i)=>i%4===0);
+  const r4h=rsi(h4.slice(-15));
+  const h1d=hist.filter((_,i)=>i%24===0);
+  const r1d=h1d.length>5?rsi(h1d.slice(-10)):50;
+  const d=(v)=>v>55?"AL":v<45?"SAT":"NÖTR";
+  const dirs=[d(r1h),d(r4h),d(r1d)];
+  const buy=dirs.filter(x=>x==="AL").length,sell=dirs.filter(x=>x==="SAT").length;
+  const align=buy===3?3:sell===3?-3:buy===2?1:sell===2?-1:0;
+  const label=align===3?"3/3 AL ✅":align===-3?"3/3 SAT 🔴":align===1?"2/3 AL":align===-1?"2/3 SAT":"Karışık";
+  return{h1:d(r1h),h4:d(r4h),d1:d(r1d),r1h,r4h,r1d,align,label};
+}
+
+// ─── Ana Analiz ───────────────────────────────────────────────────────────────
 function analyze(hist,price){
-  if(hist.length<30)return{action:"BEKLE",conf:0,score:0,reasons:["Veri biriktiriliyyor ("+hist.length+"/30)"],strat:"Bekleniyor",regime:"—",ind:null,leading:null};
-
-  const r=rsi(hist),m=macd(hist),b=boll(hist),e9=ema(hist,9),e21=ema(hist,21),e50=ema(hist,50),sr=srsi(hist),c=cci_(hist);
+  if(hist.length<30)return{action:"BEKLE",conf:0,score:0,reasons:["Veri biriktiriliyyor ("+hist.length+"/30)"],strat:"Bekleniyor",regime:"—",ind:null,lead:null};
+  const r=rsi(hist),m=macd(hist),b=boll(hist);
+  const e9=ema(hist,9),e21=ema(hist,21),e50=ema(hist,50);
+  const sr=srsi(hist),c=cci(hist);
   const slope=hist.length>6?(hist[hist.length-1]-hist[hist.length-7])/hist[hist.length-7]*100:0;
   const trending=Math.abs(slope)>.3||b.bw>2.5;
 
-  // ── 1. HACİM ANALİZİ (simüle — fiyat değişim hızından türetilir) ──────────
-  // Gerçek hacim verisi olmadığından fiyat ivmesi × volatilite ile tahmin edilir
-  const recentVols=hist.slice(-10).map((v,i,a)=>i===0?0:Math.abs(v-a[i-1])/a[i-1]*100);
-  const avgVol=recentVols.reduce((a,b)=>a+b,0)/recentVols.length||0.001;
-  const lastVol=recentVols[recentVols.length-1]||0;
-  const volSpike=lastVol/avgVol; // >2 = hacim patlaması
-  const priceDir=hist[hist.length-1]>hist[hist.length-3]?"up":"down";
-  // Birikim: hacim artarken fiyat yatay veya hafif yukarı
-  const accumulation=volSpike>1.5&&slope>-0.2&&slope<1.0;
-  // Dağıtım: hacim artarken fiyat yatay veya hafif aşağı
-  const distribution=volSpike>1.5&&slope>-1.0&&slope<0.2;
+  // Hacim
+  const vols=hist.slice(-10).map((v,i,a)=>i===0?0:Math.abs(v-a[i-1])/a[i-1]*100);
+  const avgVol=vols.reduce((a,b)=>a+b,0)/vols.length||0.001;
+  const lastVol=vols[vols.length-1]||0;
+  const vSpike=lastVol/avgVol;
+  const accum=vSpike>1.5&&slope>-0.2&&slope<1.0;
+  const distrib=vSpike>1.5&&slope>-1.0&&slope<0.2;
 
-  // ── 2. RSI DIVERGENCE ────────────────────────────────────────────────────
+  // RSI Divergence
   let bullDiv=false,bearDiv=false;
   if(hist.length>=30){
-    // Son 20 mumda fiyat ve RSI zirvelerini/diplerini karşılaştır
-    const window=hist.slice(-20);
-    const rsiWindow=window.map((_,i)=>rsi(hist.slice(0,hist.length-20+i+1)));
-    // Fiyat yeni dip, RSI daha yüksek dip → bullish divergence
-    const priceLow1=Math.min(...window.slice(0,10)),priceLow2=Math.min(...window.slice(10));
-    const rsiAtLow1=rsiWindow[window.slice(0,10).indexOf(priceLow1)];
-    const rsiAtLow2=rsiWindow[10+window.slice(10).indexOf(priceLow2)];
-    if(priceLow2<priceLow1&&rsiAtLow2>rsiAtLow1+3) bullDiv=true;
-    // Fiyat yeni zirve, RSI daha düşük zirve → bearish divergence
-    const priceHigh1=Math.max(...window.slice(0,10)),priceHigh2=Math.max(...window.slice(10));
-    const rsiAtHigh1=rsiWindow[window.slice(0,10).indexOf(priceHigh1)];
-    const rsiAtHigh2=rsiWindow[10+window.slice(10).indexOf(priceHigh2)];
-    if(priceHigh2>priceHigh1&&rsiAtHigh2<rsiAtHigh1-3) bearDiv=true;
+    const w=hist.slice(-20);
+    const rv=w.map((_,i)=>rsi(hist.slice(0,hist.length-20+i+1)));
+    const pl1=Math.min(...w.slice(0,10)),pl2=Math.min(...w.slice(10));
+    const rl1=rv[w.slice(0,10).indexOf(pl1)]||50;
+    const rl2=rv[10+w.slice(10).indexOf(pl2)]||50;
+    if(pl2<pl1&&rl2>rl1+3)bullDiv=true;
+    const ph1=Math.max(...w.slice(0,10)),ph2=Math.max(...w.slice(10));
+    const rh1=rv[w.slice(0,10).indexOf(ph1)]||50;
+    const rh2=rv[10+w.slice(10).indexOf(ph2)]||50;
+    if(ph2>ph1&&rh2<rh1-3)bearDiv=true;
   }
 
-  // ── 3. FİBONACCİ SEVİYELERİ ─────────────────────────────────────────────
-  const fibWindow=hist.slice(-50);
-  const fibHigh=Math.max(...fibWindow),fibLow=Math.min(...fibWindow);
-  const fibRange=fibHigh-fibLow||1;
-  const fib236=fibHigh-0.236*fibRange;
-  const fib382=fibHigh-0.382*fibRange;
-  const fib500=fibHigh-0.500*fibRange;
-  const fib618=fibHigh-0.618*fibRange;
-  const fib786=fibHigh-0.786*fibRange;
-  const fibs=[fib236,fib382,fib500,fib618,fib786];
-  const fibLabels=["Fib %23.6","Fib %38.2","Fib %50.0","Fib %61.8","Fib %78.6"];
-  // Fiyat hangi Fibonacci seviyesine yakın? (±%0.8 tolerans)
-  const nearFib=fibs.reduce((best,f,i)=>{const d=Math.abs(price-f)/price*100;return d<best.d?{d,label:fibLabels[i],val:f,idx:i}:best;},{d:999,label:"",val:0,idx:-1});
-  const atFibSupport=nearFib.d<0.8&&nearFib.idx>=2; // %50 altı = destek
-  const atFibResistance=nearFib.d<0.8&&nearFib.idx<2; // %23.6-38.2 = direnç
+  // Fibonacci
+  const fw=hist.slice(-50);
+  const fHi=Math.max(...fw),fLo=Math.min(...fw),fRng=fHi-fLo||1;
+  const fibs=[fHi-0.236*fRng,fHi-0.382*fRng,fHi-0.5*fRng,fHi-0.618*fRng,fHi-0.786*fRng];
+  const fibLbls=["%23.6","%38.2","%50.0","%61.8","%78.6"];
+  const nearFib=fibs.reduce((best,f,i)=>{const d=Math.abs(price-f)/price*100;return d<best.d?{d,lbl:fibLbls[i],val:f,idx:i}:best;},{d:999,lbl:"",val:0,idx:-1});
+  const atFibSup=nearFib.d<0.8&&nearFib.idx>=2;
+  const atFibRes=nearFib.d<0.8&&nearFib.idx<2;
 
-  // ── SKOR HESAPLA ─────────────────────────────────────────────────────────
   let score=0,reasons=[],strat="";
-
-  // Gecikmeli indikatörler (mevcut)
   if(trending){
     strat="Trend Takip (EMA+MACD)";
     if(e9>e21&&e21>e50){score+=2;reasons.push("🔼 EMA9>21>50 yükseliş trendi");}
@@ -119,8 +144,8 @@ function analyze(hist,price){
     else{score-=1;reasons.push("↘ EMA9<EMA21");}
     if(m.hist>0){score+=2;reasons.push("⚡ MACD pozitif momentum");}
     else{score-=2;reasons.push("⚡ MACD negatif momentum");}
-    if(r>50&&r<70){score+=1;reasons.push("📈 RSI momentum ("+r.toFixed(0)+")");}
-    else if(r<50&&r>30){score-=1;reasons.push("📉 RSI zayıflama ("+r.toFixed(0)+")");}
+    if(r>50&&r<70){score+=1;reasons.push("RSI momentum ("+r.toFixed(0)+")");}
+    else if(r<50&&r>30){score-=1;reasons.push("RSI zayıflama ("+r.toFixed(0)+")");}
   } else {
     strat="Ortalamaya Dönüş (RSI+BB)";
     if(r<32&&sr.k<25){score+=3;reasons.push("💚 Aşırı satım RSI:"+r.toFixed(0)+" StochRSI:"+sr.k.toFixed(0));}
@@ -132,284 +157,151 @@ function analyze(hist,price){
     if(c<-100){score+=1;reasons.push("CCI aşırı satım ("+c.toFixed(0)+")");}
     else if(c>100){score-=1;reasons.push("CCI aşırı alım ("+c.toFixed(0)+")");}
   }
-
-  // ── ÖNİCÜ SİNYALLER (ek puan) ────────────────────────────────────────────
-
-  // Hacim analizi
-  if(accumulation){
-    score+=2;
-    reasons.push("🔋 Birikim tespit edildi (hacim spike: ×"+volSpike.toFixed(1)+")");
-  } else if(distribution){
-    score-=2;
-    reasons.push("📤 Dağıtım tespit edildi (hacim spike: ×"+volSpike.toFixed(1)+")");
-  } else if(volSpike>2&&priceDir==="up"){
-    score+=1;reasons.push("📈 Güçlü alım hacmi (×"+volSpike.toFixed(1)+")");
-  } else if(volSpike>2&&priceDir==="down"){
-    score-=1;reasons.push("📉 Güçlü satış hacmi (×"+volSpike.toFixed(1)+")");
-  }
-
-  // RSI Divergence
-  if(bullDiv){
-    score+=3;
-    reasons.push("🔀 Bullish RSI Divergence — fiyat dip ama RSI toparlanıyor");
-  }
-  if(bearDiv){
-    score-=3;
-    reasons.push("🔀 Bearish RSI Divergence — fiyat zirve ama RSI zayıflıyor");
-  }
-
-  // Fibonacci
-  if(atFibSupport){
-    score+=2;
-    reasons.push("📐 Fibonacci destek: "+nearFib.label+" ($"+nearFib.val.toFixed(2)+")");
-  } else if(atFibResistance){
-    score-=1;
-    reasons.push("📐 Fibonacci direnç: "+nearFib.label+" ($"+nearFib.val.toFixed(2)+")");
-  }
-
-  // EMA ivme / slope
+  if(accum){score+=2;reasons.push("🔋 Birikim tespit edildi (×"+vSpike.toFixed(1)+")");}
+  else if(distrib){score-=2;reasons.push("📤 Dağıtım tespit edildi (×"+vSpike.toFixed(1)+")");}
+  if(bullDiv){score+=3;reasons.push("🔀 Bullish RSI Divergence — erken dönüş sinyali");}
+  if(bearDiv){score-=3;reasons.push("🔀 Bearish RSI Divergence — erken düşüş sinyali");}
+  if(atFibSup){score+=2;reasons.push("📐 Fibonacci destek: "+nearFib.lbl+" ($"+nearFib.val.toFixed(2)+")");}
+  else if(atFibRes){score-=1;reasons.push("📐 Fibonacci direnç: "+nearFib.lbl);}
   if(slope>1.5){score+=1;reasons.push("🚀 Güçlü yukarı ivme +"+slope.toFixed(2)+"%");}
   else if(slope<-1.5){score-=1;reasons.push("🌊 Güçlü aşağı ivme "+slope.toFixed(2)+"%");}
 
   const conf=Math.min(99,Math.round(Math.abs(score)*10+10));
   const action=score>=4?"AL":score<=-4?"SAT":"BEKLE";
-
-  return{
-    action,score,conf,reasons,strat,regime:trending?"TREND":"YATAY",
+  return{action,score,conf,reasons,strat,regime:trending?"TREND":"YATAY",
     ind:{r,m,b,e9,e21,e50,sr,c,slope,bw:b.bw},
-    leading:{volSpike,accumulation,distribution,bullDiv,bearDiv,nearFib,atFibSupport,atFibResistance,fibs,fibLabels,fibHigh,fibLow}
-  };
-}
-// ── ATR Hesabı ─────────────────────────────────────────────────────────────
-function calcAtr(hist, period=14){
-  if(hist.length<period+1) return (hist[hist.length-1]||1)*0.02;
-  const trs=hist.slice(-period-1).map((v,i,a)=>i===0?0:Math.abs(v-a[i-1]));
-  return trs.slice(1).reduce((a,b)=>a+b,0)/period;
+    lead:{vSpike,accum,distrib,bullDiv,bearDiv,nearFib,atFibSup,atFibRes,fibs,fibLbls,fHi,fLo}};
 }
 
-// ── Piyasa Rejimi ──────────────────────────────────────────────────────────
-// Trending up / down / ranging / volatile
-function detectRegime(hist){
-  if(hist.length<50) return{type:"unknown",label:"Bilinmiyor",color:"#6b7280"};
-  const e20=ema(hist,20), e50=ema(hist.slice(-60),50);
-  const atr14=calcAtr(hist,14);
-  const price=hist[hist.length-1];
-  const atrPct=atr14/price*100;
-  const slope20=((hist[hist.length-1]-hist[hist.length-21])/hist[hist.length-21])*100;
-  const bb=boll(hist,20);
-  const bbWidthPct=bb.bw;
-
-  if(bbWidthPct<1.5) return{type:"squeeze",label:"SIKIŞMA",color:"#f59e0b",desc:"Büyük hareket bekleniyor"};
-  if(atrPct>3&&bbWidthPct>6) return{type:"volatile",label:"VOLATİL",color:"#ef4444",desc:"Yüksek risk, dikkatli ol"};
-  if(e20>e50&&slope20>1) return{type:"bull",label:"YÜKSELİŞ",color:"#22c55e",desc:"Trend yukarı, al sinyalleri güvenilir"};
-  if(e20<e50&&slope20<-1) return{type:"bear",label:"DÜŞÜŞ",color:"#ef4444",desc:"Trend aşağı, sat sinyalleri güvenilir"};
-  return{type:"range",label:"YATAY",color:"#38bdf8",desc:"Ortalamaya dönüş stratejisi çalışır"};
-}
-
-// ── Dinamik Stop-Loss / Take-Profit (ATR bazlı) ────────────────────────────
-function calcDynamicLevels(price, hist, riskLevel){
-  const atr=calcAtr(hist,14);
-  const regime=detectRegime(hist);
-  // ATR çarpanları risk seviyesine ve rejime göre
-  const multipliers={
-    düşük: {sl:1.5, tp:3.0},
-    orta:  {sl:2.0, tp:4.0},
-    yüksek:{sl:2.5, tp:6.0},
-  };
-  const m=multipliers[riskLevel]||multipliers.orta;
-  // Volatil piyasada SL'yi genişlet
-  const slMult = regime.type==="volatile" ? m.sl*1.4 : m.sl;
-  const tpMult = regime.type==="bull" ? m.tp*1.2 : regime.type==="bear" ? m.tp*0.8 : m.tp;
-  return{
-    stopLoss: price*(1 - slMult*atr/price),
-    takeProfit: price*(1 + tpMult*atr/price),
-    atr, atrPct: atr/price*100,
-    slPct: slMult*atr/price*100,
-    tpPct: tpMult*atr/price*100,
-    regime
-  };
-}
-
-// ── Multi-Timeframe Analiz ─────────────────────────────────────────────────
-// 1 saatlik geçmiş üzerinden farklı zaman dilimlerini simüle eder
-function multiTimeframeSignal(hist){
-  if(hist.length<48) return{tf1h:"—",tf4h:"—",tf1d:"—",alignment:0,label:"Veri yetersiz"};
-  // 1 saatlik (son 14 mum)
-  const sig1h=rsi(hist.slice(-15));
-  // 4 saatlik (her 4 saatlik kapanışı al)
-  const hist4h=hist.filter((_,i)=>i%4===0);
-  const sig4h=rsi(hist4h.slice(-15));
-  // Günlük (her 24 saatlik)
-  const hist1d=hist.filter((_,i)=>i%24===0);
-  const sig1d=hist1d.length>5?rsi(hist1d.slice(-10)):50;
-
-  const dir1h=sig1h>55?"AL":sig1h<45?"SAT":"NÖTR";
-  const dir4h=sig4h>55?"AL":sig4h<45?"SAT":"NÖTR";
-  const dir1d=sig1d>55?"AL":sig1d<45?"SAT":"NÖTR";
-
-  // Hizalama skoru: kaç zaman dilimi aynı yönde?
-  const dirs=[dir1h,dir4h,dir1d];
-  const buyCount=dirs.filter(d=>d==="AL").length;
-  const sellCount=dirs.filter(d=>d==="SAT").length;
-  const alignment=buyCount===3?3:sellCount===3?-3:buyCount===2?1:sellCount===2?-1:0;
-
-  const label=alignment===3?"3/3 AL ✅":alignment===-3?"3/3 SAT 🔴":alignment===1?"2/3 AL":alignment===-1?"2/3 SAT":"Karışık ⚡";
-  return{tf1h:dir1h,tf4h:dir4h,tf1d:dir1d,rsi1h:sig1h,rsi4h:sig4h,rsi1d:sig1d,alignment,label};
-}
-
-// ── BACKTESTING MOToru ─────────────────────────────────────────────────────
-function runBacktest(hist, riskLevel="orta"){
-  if(hist.length<50) return null;
-  const params={
-    düşük: {pos:0.04,sl:0.012,tp:0.035,minScore:4},
-    orta:  {pos:0.07,sl:0.022,tp:0.065,minScore:4},
-    yüksek:{pos:0.12,sl:0.04, tp:0.11, minScore:4},
-  };
-  const p=params[riskLevel]||params.orta;
-  let balance=10000, position=null;
-  const trades=[], equity=[10000];
-
-  for(let i=50; i<hist.length; i++){
-    const slice=hist.slice(0,i);
-    const price=hist[i];
+// ─── Backtesting ──────────────────────────────────────────────────────────────
+function runBacktest(hist,riskLevel){
+  if(hist.length<50)return null;
+  const p={düşük:{pos:.04,sl:.015,tp:.04},orta:{pos:.07,sl:.025,tp:.07},yüksek:{pos:.12,sl:.04,tp:.12}}[riskLevel]||{pos:.07,sl:.025,tp:.07};
+  let bal=10000,pos=null;
+  const trades=[],equity=[10000];
+  for(let i=50;i<hist.length;i++){
+    const slice=hist.slice(0,i),price=hist[i];
     const sig=analyze(slice,price);
-
-    // Stop-loss / take-profit
-    if(position){
-      const atr=calcAtr(slice,14);
-      const dynSL=position.entry*(1-2.0*atr/position.entry);
-      const dynTP=position.entry*(1+4.0*atr/position.entry);
-      if(price<=dynSL||price<=position.sl){
-        const gain=position.qty*price-position.inv;
-        balance+=position.qty*price;
-        trades.push({i,action:"SAT",price,gain,reason:"Stop-Loss"});
-        position=null;
-      } else if(price>=dynTP||price>=position.tp){
-        const gain=position.qty*price-position.inv;
-        balance+=position.qty*price;
-        trades.push({i,action:"SAT",price,gain,reason:"Kâr Hedefi"});
-        position=null;
+    if(pos){
+      if(price<=pos.sl||price>=pos.tp){
+        const gain=pos.qty*price-pos.inv;
+        bal+=pos.qty*price;
+        trades.push({action:"SAT",price,gain,reason:price<=pos.sl?"Stop-Loss":"Kâr Hedefi"});
+        pos=null;
       }
     }
-
-    // Yeni pozisyon aç
-    if(!position&&sig.score>=p.minScore&&sig.action==="AL"&&balance>200){
-      const inv=balance*p.pos;
-      position={qty:inv/price,entry:price,inv,sl:price*(1-p.sl),tp:price*(1+p.tp)};
-      balance-=inv;
-      trades.push({i,action:"AL",price,inv});
-    } else if(position&&sig.score<=-p.minScore&&sig.action==="SAT"){
-      const gain=position.qty*price-position.inv;
-      balance+=position.qty*price;
-      trades.push({i,action:"SAT",price,gain,reason:"Sinyal"});
-      position=null;
+    if(!pos&&sig.action==="AL"&&sig.score>=4&&bal>200){
+      const inv=bal*p.pos;
+      const dl=dynLevels(price,slice,riskLevel);
+      pos={qty:inv/price,entry:price,inv,sl:dl.sl,tp:dl.tp};
+      bal-=inv;
+      trades.push({action:"AL",price,inv});
+    } else if(pos&&sig.action==="SAT"&&sig.score<=-4){
+      const gain=pos.qty*price-pos.inv;
+      bal+=pos.qty*price;
+      trades.push({action:"SAT",price,gain,reason:"Sinyal"});
+      pos=null;
     }
-
-    const totalVal=balance+(position?position.qty*price:0);
-    equity.push(totalVal);
+    equity.push(bal+(pos?pos.qty*price:0));
   }
-
-  // Açık pozisyonu kapat
-  if(position){
-    const price=hist[hist.length-1];
-    const gain=position.qty*price-position.inv;
-    balance+=position.qty*price;
-    trades.push({action:"SAT",price,gain,reason:"Kapanış"});
-  }
-
-  const finalVal=balance;
-  const totalReturn=((finalVal/10000)-1)*100;
+  if(pos){const price=hist[hist.length-1];const gain=pos.qty*price-pos.inv;bal+=pos.qty*price;trades.push({action:"SAT",price,gain,reason:"Kapanış"});}
   const sells=trades.filter(t=>t.action==="SAT"&&t.gain!=null);
   const wins=sells.filter(t=>t.gain>0);
-  const winRate=sells.length?Math.round(wins.length/sells.length*100):0;
   const totalPnl=sells.reduce((s,t)=>s+(t.gain||0),0);
-  const maxEquity=Math.max(...equity);
-  const maxDrawdown=Math.min(...equity.map((v,i)=>((v-maxEquity)/maxEquity)*100));
-
-  return{
-    finalVal,totalReturn,winRate,totalPnl,
-    tradeCount:sells.length,
-    winCount:wins.length,
-    lossCount:sells.length-wins.length,
-    maxDrawdown,
-    equity:equity.slice(0,200), // grafik için
-    trades:trades.slice(-20)
-  };
+  const maxEq=Math.max(...equity);
+  const maxDD=Math.min(...equity.map((v)=>((v-maxEq)/maxEq)*100));
+  return{finalVal:bal,totalReturn:((bal/10000)-1)*100,winRate:sells.length?Math.round(wins.length/sells.length*100):0,
+    totalPnl,tradeCount:sells.length,winCount:wins.length,lossCount:sells.length-wins.length,
+    maxDrawdown:maxDD,equity:equity.slice(-200),trades:trades.slice(-12)};
 }
 
-
+// ─── UI Bileşenleri ───────────────────────────────────────────────────────────
 function Spark({data,color,W=78,H=26}){
-  if(!data||data.length<2)return<svg width={W} height={H}/>;
+  if(!data||data.length<2)return <svg width={W} height={H}/>;
   const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||mn*.001;
   const pts=data.map((v,i)=>`${i/(data.length-1)*W},${H-((v-mn)/rng)*(H-3)-1}`).join(" ");
   const uid="s"+(color+W).split("").reduce((a,c)=>a+c.charCodeAt(0),0);
-  return<svg width={W} height={H}><defs><linearGradient id={uid} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".2"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs><polygon points={`${pts} ${W},${H} 0,${H}`} fill={`url(#${uid})`}/><polyline points={pts} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round"/></svg>;
+  return <svg width={W} height={H}><defs><linearGradient id={uid} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".2"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs><polygon points={`${pts} ${W},${H} 0,${H}`} fill={`url(#${uid})`}/><polyline points={pts} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round"/></svg>;
 }
+
 function Gauge({v,action}){
   const col=action==="AL"?"#22c55e":action==="SAT"?"#ef4444":"#6b7280";
   const r=28,circ=2*Math.PI*r,dash=v/100*circ;
-  return<svg width={76} height={54}><circle cx={38} cy={38} r={r} fill="none" stroke="#1e293b" strokeWidth={7}/><circle cx={38} cy={38} r={r} fill="none" stroke={col} strokeWidth={5} strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 38 38)"/><text x={38} y={34} textAnchor="middle" fill={col} fontSize="14" fontWeight="bold">{v}%</text><text x={38} y={47} textAnchor="middle" fill="#475569" fontSize="8">GÜVEN</text></svg>;
+  return <svg width={76} height={54}><circle cx={38} cy={38} r={r} fill="none" stroke="#1e293b" strokeWidth={7}/><circle cx={38} cy={38} r={r} fill="none" stroke={col} strokeWidth={5} strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 38 38)"/><text x={38} y={34} textAnchor="middle" fill={col} fontSize="14" fontWeight="bold">{v}%</text><text x={38} y={47} textAnchor="middle" fill="#475569" fontSize="8">GÜVEN</text></svg>;
 }
+
+function EqChart({data,W=440,H=80}){
+  if(!data||data.length<2)return null;
+  const mn=Math.min(...data),mx=Math.max(...data),rng=mx-mn||1;
+  const pts=data.map((v,i)=>`${i/(data.length-1)*W},${H-((v-mn)/rng)*(H-4)-2}`).join(" ");
+  const color=data[data.length-1]>=data[0]?"#22c55e":"#ef4444";
+  const base=H-((10000-mn)/rng)*(H-4)-2;
+  return <svg width={W} height={H} style={{display:"block"}}>
+    <defs><linearGradient id="eq" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".15"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs>
+    <line x1={0} y1={base} x2={W} y2={base} stroke="#1a2a5e" strokeWidth="1" strokeDasharray="4,4"/>
+    <polygon points={`${pts} ${W},${H} 0,${H}`} fill="url(#eq)"/>
+    <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round"/>
+  </svg>;
+}
+
 const fp=v=>v>1000?v.toFixed(2):v>10?v.toFixed(3):v>1?v.toFixed(4):v.toFixed(6);
 const AC={AL:"#22c55e",SAT:"#ef4444",BEKLE:"#6b7280"};
+const Box=({ch,s={}})=><div style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:10,...s}}>{ch}</div>;
+const Lbl=({t})=><div style={{fontSize:9,color:"#2a4070",marginBottom:6}}>{t}</div>;
+const Row=({l,v,c})=><div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:9}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c||"#94a3b8",fontWeight:700}}>{v}</span></div>;
+const StatCard=({l,v,c})=><div style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:6,padding:"6px 8px"}}><div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{v}</div></div>;
+const MiniCard=({l,v,c})=><div style={{background:"#050d20",borderRadius:5,padding:"6px 8px"}}><div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div><div style={{fontWeight:700,color:c||"#94a3b8",fontSize:11}}>{v}</div></div>;
 
-// ── Proxy Kurulum Ekranı ──────────────────────────────────────────────────────
-function SetupScreen({onSave}){
-  const [url,setUrl]=useState(localStorage.getItem("proxyUrl")||"");
+// ─── Proxy Kurulum ────────────────────────────────────────────────────────────
+function Setup({onSave}){
+  const [url,setUrl]=useState(localStorage.getItem("pxUrl")||"");
+  const [test,setTest]=useState(null);
   const [testing,setTesting]=useState(false);
-  const [testResult,setTestResult]=useState(null);
-  function testUrl(u){
-    setTesting(true);setTestResult(null);
+  function doTest(u){
+    setTesting(true);setTest(null);
     const xhr=new XMLHttpRequest();xhr.timeout=10000;xhr.open("GET",u,true);
-    xhr.onreadystatechange=function(){
+    xhr.onreadystatechange=()=>{
       if(xhr.readyState!==4)return;setTesting(false);
-      if(xhr.status===200){try{const d=JSON.parse(xhr.responseText);if(d.bitcoin){setTestResult({ok:true,msg:"✅ Başarılı! Bitcoin: $"+d.bitcoin?.usd?.toFixed(0)});}else{setTestResult({ok:false,msg:"⚠️ Format beklenmedik"});}}catch(e){setTestResult({ok:false,msg:"⚠️ Parse hatası"});}}
-      else{setTestResult({ok:false,msg:"❌ HTTP "+xhr.status});}
+      if(xhr.status===200){try{const d=JSON.parse(xhr.responseText);d.bitcoin?setTest({ok:true,msg:"✅ Başarılı! BTC: $"+d.bitcoin?.usd?.toFixed(0)}):setTest({ok:false,msg:"⚠ Format hatası"});}catch(e){setTest({ok:false,msg:"⚠ Parse hatası"});}}
+      else setTest({ok:false,msg:"❌ HTTP "+xhr.status});
     };
-    xhr.ontimeout=()=>{setTesting(false);setTestResult({ok:false,msg:"❌ Timeout"});};
-    xhr.onerror=()=>{setTesting(false);setTestResult({ok:false,msg:"❌ Bağlantı hatası"});};
+    xhr.ontimeout=()=>{setTesting(false);setTest({ok:false,msg:"❌ Timeout"});};
+    xhr.onerror=()=>{setTesting(false);setTest({ok:false,msg:"❌ Bağlantı hatası"});};
     xhr.send();
   }
-  return(
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#04081a"}}>
-      <div style={{width:520,background:"#080e24",border:"1px solid #1a2a5e",borderRadius:12,padding:24}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
-          <div style={{width:40,height:40,borderRadius:10,background:"#f0b90b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:900,color:"#000"}}>₿</div>
-          <div><div style={{fontSize:15,fontWeight:700,color:"#fff"}}>KRİPTO AI TRADER</div><div style={{fontSize:10,color:"#2a4070"}}>Vercel Proxy URL — 7 Günlük Geçmiş Veri</div></div>
-        </div>
-        <div style={{background:"#0a1535",border:"1px solid #1a3060",borderRadius:8,padding:10,marginBottom:14,fontSize:11,color:"#6a8ab0",lineHeight:1.7}}>
-          Proxy hem 7 günlük geçmiş veri hem de her 10 saniyede bir anlık fiyat güncellemesi için kullanılıyor. <span style={{color:"#22c55e"}}>Türkiye'den sorunsuz çalışır.</span>
-        </div>
-        <div style={{marginBottom:12}}>
-          <div style={{fontSize:10,color:"#2a4070",marginBottom:6}}>PROXY URL</div>
-          <div style={{display:"flex",gap:8}}>
-            <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://xxx.vercel.app/api/prices" style={{flex:1,background:"#0a1535",border:"1px solid #1a2a5e",borderRadius:6,padding:"8px 12px",color:"#b0c4f8",fontSize:11,outline:"none"}}/>
-            <button onClick={()=>testUrl(url)} disabled={!url||testing} style={{padding:"8px 14px",background:"#0a1535",border:"1px solid #1a3060",borderRadius:6,color:"#38bdf8",fontSize:11,opacity:!url||testing?.6:1}}>{testing?"Test...":"Test Et"}</button>
-          </div>
-          {testResult&&<div style={{marginTop:8,fontSize:11,color:testResult.ok?"#22c55e":"#ef4444",padding:"6px 10px",background:testResult.ok?"#021008":"#120305",borderRadius:5}}>{testResult.msg}</div>}
-        </div>
-        <button onClick={()=>{if(url){localStorage.setItem("proxyUrl",url);onSave(url);}}} disabled={!url} style={{width:"100%",padding:"11px",background:url?"#14532d":"#0a1228",border:`1px solid ${url?"#22c55e":"#1a2a5e"}`,borderRadius:8,color:url?"#22c55e":"#4a6fa5",fontWeight:700,fontSize:13,opacity:url?1:.6}}>
-          ▶ BOTU BAŞLAT
-        </button>
+  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#04081a"}}>
+    <div style={{width:500,background:"#080e24",border:"1px solid #1a2a5e",borderRadius:12,padding:24}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+        <div style={{width:40,height:40,borderRadius:10,background:"#f0b90b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:900,color:"#000"}}>₿</div>
+        <div><div style={{fontSize:15,fontWeight:700,color:"#fff"}}>KRİPTO AI TRADER</div><div style={{fontSize:10,color:"#2a4070"}}>Vercel Proxy URL Girin</div></div>
       </div>
+      <div style={{marginBottom:12}}>
+        <div style={{fontSize:10,color:"#2a4070",marginBottom:6}}>PROXY URL</div>
+        <div style={{display:"flex",gap:8}}>
+          <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://xxx.vercel.app/api/prices" style={{flex:1,background:"#0a1535",border:"1px solid #1a2a5e",borderRadius:6,padding:"8px 12px",color:"#b0c4f8",fontSize:11,outline:"none"}}/>
+          <button onClick={()=>doTest(url)} disabled={!url||testing} style={{padding:"8px 14px",background:"#0a1535",border:"1px solid #1a3060",borderRadius:6,color:"#38bdf8",fontSize:11,opacity:!url||testing?.6:1}}>{testing?"...":"Test Et"}</button>
+        </div>
+        {test&&<div style={{marginTop:8,fontSize:11,color:test.ok?"#22c55e":"#ef4444",padding:"6px 10px",background:test.ok?"#021008":"#120305",borderRadius:5}}>{test.msg}</div>}
+      </div>
+      <button onClick={()=>{if(url){localStorage.setItem("pxUrl",url);onSave(url);}}} disabled={!url} style={{width:"100%",padding:"11px",background:url?"#14532d":"#0a1228",border:`1px solid ${url?"#22c55e":"#1a2a5e"}`,borderRadius:8,color:url?"#22c55e":"#4a6fa5",fontWeight:700,fontSize:13,opacity:url?1:.6}}>
+        ▶ BOTU BAŞLAT
+      </button>
     </div>
-  );
+  </div>;
 }
 
-// ── Ana Uygulama ──────────────────────────────────────────────────────────────
+// ─── Ana Uygulama ─────────────────────────────────────────────────────────────
 function App(){
-  const saved=localStorage.getItem("proxyUrl");
-  const [proxyUrl,setProxyUrl]=useState(saved||null);
-  const [proxyStatus,setProxyStatus]=useState("—");   // 7G geçmiş durumu
-  const [wsStatus,setWsStatus]=useState("connecting"); // WebSocket durumu
+  const saved=localStorage.getItem("pxUrl");
+  const [pxUrl,setPxUrl]=useState(saved||null);
+  const [wsStatus,setWsStatus]=useState("connecting");
   const [statusMsg,setStatusMsg]=useState("Bağlanıyor...");
-  const [histProgress,setHistProgress]=useState(0);
+  const [histPct,setHistPct]=useState(0);
   const [prices,setPrices]=useState({});
   const [hists,setHists]=useState({});
   const [market,setMarket]=useState([]);
   const [sigs,setSigs]=useState({});
   const [tickCount,setTickCount]=useState(0);
-  const [pps,setPps]=useState(0);
   const [botOn,setBotOn]=useState(false);
   const [balance,setBalance]=useState(10000);
   const [portfolio,setPortfolio]=useState({});
@@ -420,36 +312,28 @@ function App(){
   const [focus,setFocus]=useState("BTCUSDT");
   const [logs,setLogs]=useState([]);
   const [lastUpd,setLastUpd]=useState(null);
-  const [activeTab,setActiveTab]=useState("analiz"); // analiz | backtest
+  const [tab,setTab]=useState("analiz");
   const [btResult,setBtResult]=useState(null);
   const [btRunning,setBtRunning]=useState(false);
-  const [regime,setRegime]=useState(null);
-  const [mtf,setMtf]=useState(null);
 
   const prR=useRef({}),hiR=useRef({});
   const balR=useRef(10000),portR=useRef({}),trR=useRef([]),stR=useRef({w:0,l:0,t:0});
   const botR=useRef(false),riskR=useRef("orta");
-  const ppsCountR=useRef(0);
   botR.current=botOn; riskR.current=risk;
 
-  const RP={
-    düşük:{pos:.04,sl:.012,tp:.035,minC:72,maxP:2},
-    orta: {pos:.07,sl:.022,tp:.065,minC:56,maxP:4},
-    yüksek:{pos:.12,sl:.04, tp:.11, minC:45,maxP:6}
-  };
-
-  const log=useCallback((msg,type="info")=>setLogs(p=>[{msg,type,t:new Date().toLocaleTimeString("tr-TR")},...p].slice(0,150)),[]);
+  const RP={düşük:{pos:.04,minC:72,maxP:2},orta:{pos:.07,minC:56,maxP:4},yüksek:{pos:.12,minC:45,maxP:6}};
+  const log=useCallback((msg,type="info")=>setLogs(p=>[{msg,type,t:new Date().toLocaleTimeString("tr-TR")},...p].slice(0,120)),[]);
 
   function trade(pair,action,price,reason){
     const p=RP[riskR.current];
     if(action==="AL"&&balR.current>200&&!portR.current[pair]&&Object.keys(portR.current).length<p.maxP){
       const inv=balR.current*p.pos;
-      const dynLevels=calcDynamicLevels(price,hiR.current[pair]||[price],riskR.current);
-      portR.current={...portR.current,[pair]:{qty:inv/price,entry:price,inv,sl:dynLevels.stopLoss,tp:dynLevels.takeProfit,atrPct:dynLevels.atrPct}};
+      const dl=dynLevels(price,hiR.current[pair]||[price],riskR.current);
+      portR.current={...portR.current,[pair]:{qty:inv/price,entry:price,inv,sl:dl.sl,tp:dl.tp,atPct:dl.atPct}};
       balR.current-=inv;setPortfolio({...portR.current});setBalance(balR.current);
       trR.current=[{id:Date.now(),pair,action:"AL",price,inv,reason,t:new Date().toLocaleTimeString("tr-TR")},...trR.current].slice(0,300);
       setTrades([...trR.current]);
-      log("AL "+pair.replace("USDT","")+" @ $"+fp(price)+" | $"+inv.toFixed(0)+" yatırım","buy");
+      log("AL "+pair.replace("USDT","")+" @ $"+fp(price)+" | $"+inv.toFixed(0)+" | ATR: "+dl.atPct.toFixed(2)+"%","buy");
     }
     if(action==="SAT"&&portR.current[pair]){
       const pos=portR.current[pair],rev=pos.qty*price,gain=rev-pos.inv;
@@ -463,14 +347,10 @@ function App(){
     }
   }
 
-  // Throttled analiz — saniyede max 1
   const throttleRef=useRef(null);
   function scheduleAnalysis(){
     if(throttleRef.current)return;
-    throttleRef.current=setTimeout(()=>{
-      throttleRef.current=null;
-      runAnalysis();
-    },1000);
+    throttleRef.current=setTimeout(()=>{throttleRef.current=null;runAnalysis();},1500);
   }
 
   function runAnalysis(){
@@ -488,14 +368,6 @@ function App(){
     setHists(Object.fromEntries(Object.entries(hiR.current).map(([k,v])=>[k,v.slice(-500)])));
     setTickCount(c=>c+1);
     setLastUpd(new Date().toLocaleTimeString("tr-TR"));
-    // Rejim + MTF analizi
-    if(prR.current[focus]){
-      const fh=hiR.current[focus]||[];
-      if(fh.length>50){
-        setRegime(detectRegime(fh));
-        setMtf(multiTimeframeSignal(fh));
-      }
-    }
     if(botR.current){
       Object.entries(portR.current).forEach(([pair,pos])=>{
         const cur=prR.current[pair]?.price;if(!cur)return;
@@ -511,182 +383,127 @@ function App(){
     }
   }
 
-  // ── ADIM 1: Vercel proxy → 7 günlük geçmiş veri ──────────────────────────
+  // 7 günlük geçmiş — proxy
   useEffect(()=>{
-    if(!proxyUrl)return;
+    if(!pxUrl)return;
     let loaded=0;
-    const base=proxyUrl.replace("/api/prices","");
-    setProxyStatus("loading");
-    log("📊 7 günlük geçmiş veri yükleniyor (proxy)...","info");
-
+    const base=pxUrl.replace("/api/prices","");
+    log("📊 7 günlük geçmiş veri yükleniyor...","info");
     COINS.forEach((coin,idx)=>{
-      const url=base+"/api/prices?type=history&id="+coin.cg;
-      const xhr=new XMLHttpRequest();xhr.timeout=15000;xhr.open("GET",url,true);
-      xhr.onreadystatechange=function(){
+      const xhr=new XMLHttpRequest();xhr.timeout=15000;xhr.open("GET",base+"/api/prices?type=history&id="+coin.cg,true);
+      xhr.onreadystatechange=()=>{
         if(xhr.readyState!==4)return;
-        if(xhr.status===200){
-          try{
-            const d=JSON.parse(xhr.responseText);
-            if(d.prices&&d.prices.length>0){
-              hiR.current[coin.pair]=d.prices;
-              const last=d.prices[d.prices.length-1];
-              if(!prR.current[coin.pair])
-                prR.current[coin.pair]={price:last,chg:((last-d.prices[0])/d.prices[0])*100,high:Math.max(...d.prices.slice(-24)),low:Math.min(...d.prices.slice(-24))};
-            }
-          }catch(_){}
-        }
-        loaded++;
-        setHistProgress(Math.round(loaded/COINS.length*100));
-        if(loaded===COINS.length){
-          setProxyStatus("ok");
-          runAnalysis();
-          log("✅ 7 günlük geçmiş veri tamam — "+COINS.length+" coin × 168 saatlik veri","info");
-        }
+        if(xhr.status===200){try{const d=JSON.parse(xhr.responseText);if(d.prices?.length){hiR.current[coin.pair]=d.prices;const last=d.prices[d.prices.length-1];if(!prR.current[coin.pair])prR.current[coin.pair]={price:last,chg:((last-d.prices[0])/d.prices[0])*100,high:Math.max(...d.prices.slice(-24)),low:Math.min(...d.prices.slice(-24))};}}catch(_){}}
+        loaded++;setHistPct(Math.round(loaded/COINS.length*100));
+        if(loaded===COINS.length){runAnalysis();log("✅ 7G geçmiş tamam — "+COINS.length+" coin × 168 saatlik","info");}
       };
-      xhr.ontimeout=()=>{loaded++;setHistProgress(Math.round(loaded/COINS.length*100));if(loaded===COINS.length){setProxyStatus("ok");runAnalysis();}};
-      xhr.onerror=()=>{loaded++;if(loaded===COINS.length){setProxyStatus("ok");runAnalysis();}};
+      xhr.ontimeout=()=>{loaded++;if(loaded===COINS.length){runAnalysis();}};
+      xhr.onerror=()=>{loaded++;if(loaded===COINS.length){runAnalysis();}};
       setTimeout(()=>xhr.send(),idx*300);
     });
-  },[proxyUrl]);
+  },[pxUrl]);
 
-  // ── ADIM 2: Proxy polling → 10 saniyede bir anlık fiyat güncelleme ──────────
+  // Anlık fiyat — proxy polling
   useEffect(()=>{
-    if(!proxyUrl)return;
+    if(!pxUrl)return;
     let active=true,fails=0,firstOk=false,timer=null;
-
-    // PPS sayacı (her saniye sıfırla)
-    const ppsTimer=setInterval(()=>{setPps(ppsCountR.current);ppsCountR.current=0;},1000);
-
-    function fetchLive(){
+    function fetch_(){
       if(!active)return;
-      const xhr=new XMLHttpRequest();
-      xhr.timeout=10000;
-      xhr.open("GET",proxyUrl,true);
-      xhr.onreadystatechange=function(){
+      const xhr=new XMLHttpRequest();xhr.timeout=12000;xhr.open("GET",pxUrl,true);
+      xhr.onreadystatechange=()=>{
         if(xhr.readyState!==4||!active)return;
         if(xhr.status===200){
           try{
-            const data=JSON.parse(xhr.responseText);
-            let got=0;
+            const data=JSON.parse(xhr.responseText);let got=0;
             COINS.forEach(coin=>{
-              const d=data[coin.cg];if(!d||!d.usd)return;
+              const d=data[coin.cg];if(!d?.usd)return;
               const price=d.usd,prev=prR.current[coin.pair]||{};
-              prR.current[coin.pair]={
-                price,
-                chg:d.usd_24h_change||prev.chg||0,
-                high:d.usd_24h_high||Math.max(price,prev.high||price),
-                low:d.usd_24h_low||Math.min(price,prev.low||price),
-              };
-              const h=hiR.current[coin.pair]||[];
-              if(!h.length||price!==h[h.length-1])
-                hiR.current[coin.pair]=[...h,price].slice(-500);
-              ppsCountR.current++;
-              got++;
+              prR.current[coin.pair]={price,chg:d.usd_24h_change||0,high:d.usd_24h_high||Math.max(price,prev.high||price),low:d.usd_24h_low||Math.min(price,prev.low||price)};
+              hiR.current[coin.pair]=[...(hiR.current[coin.pair]||[]),price].slice(-500);got++;
             });
             fails=0;
-            if(!firstOk&&got>0){
-              firstOk=true;
-              setWsStatus("live");
-              setStatusMsg("Proxy canlı — "+got+" coin | 10s güncelleme");
-              log("✅ Canlı veri aktif — "+got+" coin, 10 saniyede bir güncelleniyor","info");
-            }
-            if(got>0) scheduleAnalysis();
-          }catch(e){onFail("Parse: "+e.message);}
-        } else if(xhr.status===429){
-          onFail("Rate limit — 30s bekleniyor");
-          clearInterval(timer);
-          timer=setInterval(fetchLive,30000);
-        } else { onFail("HTTP "+xhr.status); }
+            if(!firstOk&&got>0){firstOk=true;setWsStatus("live");setStatusMsg("Proxy canlı — "+got+" coin | 10s");log("✅ Canlı veri aktif","info");}
+            if(got>0)scheduleAnalysis();
+          }catch(e){onFail("Parse");}
+        }else if(xhr.status===429){onFail("Rate limit");clearInterval(timer);timer=setInterval(fetch_,30000);}
+        else onFail("HTTP "+xhr.status);
       };
       xhr.ontimeout=()=>{if(active)onFail("Timeout");};
       xhr.onerror=()=>{if(active)onFail("Ağ hatası");};
       xhr.send();
     }
+    function onFail(msg){fails++;if(fails<=3||fails%5===0){setWsStatus(firstOk?"warn":"error");setStatusMsg(msg+" ("+fails+")");log("⚠ "+msg,"warn");}}
+    fetch_();timer=setInterval(fetch_,10000);
+    return()=>{active=false;clearInterval(timer);if(throttleRef.current)clearTimeout(throttleRef.current);};
+  },[pxUrl]);
 
-    function onFail(msg){
-      fails++;
-      if(fails<=3||fails%5===0){
-        setWsStatus(firstOk?"warn":"error");
-        setStatusMsg(msg+" (deneme "+fails+")");
-        log("⚠ "+msg,"warn");
-      }
-    }
-
-    fetchLive();
-    timer=setInterval(fetchLive,10000);
-    return()=>{active=false;clearInterval(timer);clearInterval(ppsTimer);if(throttleRef.current)clearTimeout(throttleRef.current);};
-  },[proxyUrl]);
-
-  if(!proxyUrl)return<SetupScreen onSave={url=>{localStorage.setItem("proxyUrl",url);setProxyUrl(url);}}/>;
+  if(!pxUrl)return <Setup onSave={url=>{localStorage.setItem("pxUrl",url);setPxUrl(url);}}/>;
 
   const totalVal=balance+Object.entries(portfolio).reduce((s,[p,pos])=>s+pos.qty*(prices[p]?.price||pos.entry),0);
   const ret=((totalVal/10000)-1)*100;
   const wr=stats.t>0?Math.round(stats.w/stats.t*100):0;
   const fSig=sigs[focus]||{},fPrice=prices[focus]||{},fHist=hists[focus]||[],fPos=portfolio[focus];
-  const wsCol=wsStatus==="live"?"#22c55e":wsStatus==="error"?"#ef4444":"#f59e0b";
+  const stCol=wsStatus==="live"?"#22c55e":wsStatus==="warn"?"#f59e0b":"#ef4444";
 
-  const Box=({children,style={}})=><div style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:10,...style}}>{children}</div>;
-  const Lbl=({c})=><div style={{fontSize:9,color:"#2a4070",marginBottom:6}}>{c}</div>;
-  const Row=({l,v,c})=><div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:9}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c||"#94a3b8",fontWeight:700}}>{v}</span></div>;
+  // Backtest runner
+  function startBacktest(){
+    const h=hists[focus];
+    if(!h||h.length<50)return;
+    setBtRunning(true);setBtResult(null);
+    setTimeout(()=>{setBtResult(runBacktest(h,risk));setBtRunning(false);},100);
+  }
 
-  return(
-  <div style={{background:"#04081a",minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+  return <div style={{background:"#04081a",minHeight:"100vh",display:"flex",flexDirection:"column"}}>
 
-  {/* Geçmiş veri progress bar */}
-  {proxyStatus==="loading"&&(
-    <div style={{background:"#0a1535",borderBottom:"1px solid #1a3060",padding:"7px 16px",display:"flex",alignItems:"center",gap:10}}>
+    {/* Geçmiş yükleme banner */}
+    {histPct>0&&histPct<100&&<div style={{background:"#0a1535",borderBottom:"1px solid #1a3060",padding:"7px 16px",display:"flex",alignItems:"center",gap:10}}>
       <div style={{width:11,height:11,border:"2px solid #38bdf8",borderTop:"2px solid transparent",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
-      <span style={{fontSize:10,color:"#38bdf8"}}>7 günlük geçmiş veri yükleniyor... ({histProgress}%)</span>
-      <div style={{flex:1,height:4,background:"#0f1a3a",borderRadius:2,overflow:"hidden"}}>
-        <div style={{width:histProgress+"%",height:"100%",background:"#38bdf8",transition:"width .3s",borderRadius:2}}/>
-      </div>
-    </div>
-  )}
+      <span style={{fontSize:10,color:"#38bdf8"}}>7 günlük geçmiş yükleniyor... ({histPct}%)</span>
+      <div style={{flex:1,height:4,background:"#0f1a3a",borderRadius:2,overflow:"hidden"}}><div style={{width:histPct+"%",height:"100%",background:"#38bdf8",transition:"width .3s",borderRadius:2}}/></div>
+    </div>}
 
-  {/* HEADER */}
-  <div style={{background:"#070c20",borderBottom:"1px solid #1a2a5e",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-    <div style={{display:"flex",alignItems:"center",gap:10}}>
-      <div style={{width:36,height:36,borderRadius:8,background:"#f0b90b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:900,color:"#000"}}>₿</div>
-      <div>
-        <div style={{fontSize:13,fontWeight:700,color:"#fff",letterSpacing:2}}>KRİPTO AI TRADER</div>
-        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
-          <div style={{width:7,height:7,borderRadius:"50%",background:wsCol,boxShadow:`0 0 6px ${wsCol}`}} className={wsStatus==="live"?"blink":""}/>
-          <span style={{fontSize:9,color:wsCol,fontWeight:700}}>
-            {wsStatus==="live"?"✅ CANLI":wsStatus==="warn"?"⚠ YAVAŞ":wsStatus==="error"?"❌ BAĞLANTI YOK":"⏳ BAĞLANIYOR"}
-          </span>
-          {wsStatus==="live"&&<span style={{fontSize:9,color:"#2a4070"}}>| {pps} fiyat/sn | {tickCount} analiz</span>}
-          {proxyStatus==="ok"&&<span style={{fontSize:9,color:"#38bdf8",marginLeft:4}}>| 7G geçmiş ✓</span>}
-          <button onClick={()=>{localStorage.removeItem("proxyUrl");setProxyUrl(null);}} style={{marginLeft:6,fontSize:8,color:"#2a4070",background:"none",border:"1px solid #1a2a5e",borderRadius:3,padding:"1px 5px"}}>⚙</button>
+    {/* Header */}
+    <div style={{background:"#070c20",borderBottom:"1px solid #1a2a5e",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{width:36,height:36,borderRadius:8,background:"#f0b90b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:900,color:"#000"}}>₿</div>
+        <div>
+          <div style={{fontSize:13,fontWeight:700,color:"#fff",letterSpacing:2}}>KRİPTO AI TRADER</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
+            <div style={{width:7,height:7,borderRadius:"50%",background:stCol}} className={wsStatus==="live"?"blink":""}/>
+            <span style={{fontSize:9,color:stCol,fontWeight:700}}>{statusMsg}</span>
+            {lastUpd&&<span style={{fontSize:9,color:"#1a3060",marginLeft:4}}>| {lastUpd}</span>}
+            <button onClick={()=>{localStorage.removeItem("pxUrl");setPxUrl(null);}} style={{marginLeft:6,fontSize:8,color:"#2a4070",background:"none",border:"1px solid #1a2a5e",borderRadius:3,padding:"1px 5px"}}>⚙</button>
+          </div>
         </div>
       </div>
-    </div>
-    <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center"}}>
-      {[["PORTFÖY","$"+totalVal.toFixed(2),ret>=0?"#22c55e":"#ef4444"],["BAKİYE","$"+balance.toFixed(2),"#38bdf8"],["GETİRİ",(ret>=0?"+":"")+ret.toFixed(2)+"%",ret>=0?"#22c55e":"#ef4444"],["WIN RATE",wr+"%",wr>=50?"#22c55e":"#f59e0b"],["İŞLEM",stats.t,"#94a3b8"]].map(([l,v,c])=>(
-        <div key={l} style={{textAlign:"center"}}><div style={{fontSize:8,color:"#2a4070",letterSpacing:1}}>{l}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{v}</div></div>
-      ))}
-    </div>
-    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-      {["düşük","orta","yüksek"].map(r=>{const c={düşük:"#22c55e",orta:"#f59e0b",yüksek:"#ef4444"}[r];return<button key={r} onClick={()=>setRisk(r)} style={{padding:"5px 9px",background:risk===r?c+"22":"#0a1228",border:`1px solid ${risk===r?c:"#1e3a5f"}`,borderRadius:6,color:risk===r?c:"#4a6fa5",fontSize:9,fontWeight:700}}>{r.toUpperCase()}</button>;})}
-      <button onClick={()=>{if(!botOn)log("🚀 Bot başlatıldı — Risk: "+risk.toUpperCase()+" | CoinCap WS + 7G proxy","info");else log("⏹ Bot durduruldu","warn");setBotOn(x=>!x);}} style={{padding:"8px 18px",background:botOn?"#7f1d1d":"#14532d",border:`1px solid ${botOn?"#ef4444":"#22c55e"}`,borderRadius:8,color:botOn?"#ef4444":"#22c55e",fontWeight:700,fontSize:12}}>
-        {botOn?"⏹ DURDUR":"▶ BAŞLAT"}
-      </button>
-    </div>
-  </div>
-
-  {/* ANA PANEL */}
-  <div style={{display:"grid",gridTemplateColumns:"250px 1fr 260px",flex:1,overflow:"hidden"}}>
-
-    {/* SOL */}
-    <div style={{borderRight:"1px solid #1a2a5e",padding:10,overflowY:"auto"}}>
-      <div style={{fontSize:9,color:"#2a4070",letterSpacing:2,marginBottom:8}}>
-        CANLI VERİ {wsStatus==="live"&&<span style={{color:"#22c55e",marginLeft:6}}>● {tickCount} güncelleme</span>}
+      <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center"}}>
+        {[["PORTFÖY","$"+totalVal.toFixed(2),ret>=0?"#22c55e":"#ef4444"],["BAKİYE","$"+balance.toFixed(2),"#38bdf8"],["GETİRİ",(ret>=0?"+":"")+ret.toFixed(2)+"%",ret>=0?"#22c55e":"#ef4444"],["WIN RATE",wr+"%",wr>=50?"#22c55e":"#f59e0b"],["İŞLEM",stats.t,"#94a3b8"]].map(([l,v,c])=>(
+          <div key={l} style={{textAlign:"center"}}><div style={{fontSize:8,color:"#2a4070",letterSpacing:1}}>{l}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{v}</div></div>
+        ))}
       </div>
-      {market.length===0
-        ?<div style={{textAlign:"center",color:"#1a3060",padding:24}}><div style={{fontSize:28,marginBottom:8}}>📡</div><div style={{color:wsCol,fontSize:11,lineHeight:1.7}}>{wsStatus==="live"?"Geçmiş veri yükleniyor...":"CoinCap WebSocket bağlanıyor..."}</div></div>
-        :market.map(d=>{
-          const ac=AC[d.action]||"#6b7280",col=(d.chg||0)>=0?"#22c55e":"#ef4444",held=!!portfolio[d.pair],h=(hists[d.pair]||[]).slice(-60);
-          return(
-            <div key={d.pair} onClick={()=>setFocus(d.pair)} style={{background:focus===d.pair?"#0d1f42":held?"#052010":"#080e24",border:`1px solid ${focus===d.pair?"#2a5a9e":held?"#22c55e33":d.action!=="BEKLE"?ac+"33":"#1a2a4e"}`,borderRadius:8,padding:"8px 9px",marginBottom:4,cursor:"pointer"}}>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+        {["düşük","orta","yüksek"].map(r=>{const c={düşük:"#22c55e",orta:"#f59e0b",yüksek:"#ef4444"}[r];return <button key={r} onClick={()=>setRisk(r)} style={{padding:"5px 9px",background:risk===r?c+"22":"#0a1228",border:`1px solid ${risk===r?c:"#1e3a5f"}`,borderRadius:6,color:risk===r?c:"#4a6fa5",fontSize:9,fontWeight:700}}>{r.toUpperCase()}</button>;})}
+        <button onClick={()=>{if(!botOn)log("🚀 Bot başlatıldı — Risk: "+risk.toUpperCase(),"info");else log("⏹ Bot durduruldu","warn");setBotOn(x=>!x);}} style={{padding:"8px 18px",background:botOn?"#7f1d1d":"#14532d",border:`1px solid ${botOn?"#ef4444":"#22c55e"}`,borderRadius:8,color:botOn?"#ef4444":"#22c55e",fontWeight:700,fontSize:12}}>
+          {botOn?"⏹ DURDUR":"▶ BAŞLAT"}
+        </button>
+      </div>
+    </div>
+
+    {/* Ana panel */}
+    <div style={{display:"grid",gridTemplateColumns:"250px 1fr 260px",flex:1,overflow:"hidden"}}>
+
+      {/* Sol — parite listesi */}
+      <div style={{borderRight:"1px solid #1a2a5e",padding:10,overflowY:"auto"}}>
+        <div style={{fontSize:9,color:"#2a4070",letterSpacing:2,marginBottom:8}}>
+          CANLI VERİ {tickCount>0&&<span style={{color:"#22c55e",marginLeft:6}}>● {tickCount}</span>}
+        </div>
+        {market.length===0
+          ?<div style={{textAlign:"center",color:"#1a3060",padding:24}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{color:stCol,fontSize:11}}>{statusMsg}</div></div>
+          :market.map(d=>{
+            const ac=AC[d.action]||"#6b7280",col=(d.chg||0)>=0?"#22c55e":"#ef4444",held=!!portfolio[d.pair];
+            const h=(hists[d.pair]||[]).slice(-50);
+            return <div key={d.pair} onClick={()=>{setFocus(d.pair);setTab("analiz");setBtResult(null);}}
+              style={{background:focus===d.pair?"#0d1f42":held?"#052010":"#080e24",border:`1px solid ${focus===d.pair?"#2a5a9e":held?"#22c55e33":d.action!=="BEKLE"?ac+"33":"#1a2a4e"}`,borderRadius:8,padding:"8px 9px",marginBottom:4,cursor:"pointer"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div style={{display:"flex",alignItems:"center",gap:4}}>
                   <span style={{color:"#fff",fontWeight:700}}>{d.pair.replace("USDT","")}</span>
@@ -696,360 +513,235 @@ function App(){
                 <span style={{padding:"2px 7px",borderRadius:4,fontSize:9,fontWeight:700,background:ac+"18",color:ac,border:`1px solid ${ac}44`}}>{d.action}</span>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginTop:5}}>
-                <div><div style={{color:"#fff",fontWeight:700,fontSize:13}}>${d.price?fp(d.price):"—"}</div><div style={{color:col,fontSize:9}}>{((d.chg||0)>=0?"+":"")+((d.chg)||0).toFixed(3)}%</div></div>
+                <div><div style={{color:"#fff",fontWeight:700,fontSize:13}}>${d.price?fp(d.price):"—"}</div><div style={{color:col,fontSize:9}}>{((d.chg||0)>=0?"+":"")+((d.chg)||0).toFixed(2)}%</div></div>
                 <Spark data={h} color={col}/>
-                <div style={{textAlign:"right"}}><div style={{fontSize:8,color:"#2a4070"}}>GÜVEN</div><div style={{fontSize:13,fontWeight:700,color:ac}}>{d.conf||0}%</div><div style={{fontSize:7,color:"#1a3060"}}>{d.hlen} veri</div></div>
+                <div style={{textAlign:"right"}}><div style={{fontSize:8,color:"#2a4070"}}>GÜVEN</div><div style={{fontSize:13,fontWeight:700,color:ac}}>{d.conf||0}%</div></div>
               </div>
               {d.action!=="BEKLE"&&<div style={{marginTop:4,fontSize:9,color:"#2a5040",padding:"2px 6px",background:"#020c08",borderRadius:3,borderLeft:`2px solid ${ac}`}}>{d.strat}</div>}
-            </div>
-          );
-        })}
-    </div>
-
-    {/* ORTA */}
-    <div style={{padding:14,overflowY:"auto"}}>
-      {/* Tab Navigation */}
-      <div style={{display:"flex",gap:6,marginBottom:12}}>
-        {[["analiz","🔬 ANALİZ"],["backtest","📈 BACKTEST"],["rejim","🌡 REJİM"]].map(([tab,label])=>(
-          <button key={tab} onClick={()=>{
-            setActiveTab(tab);
-            if(tab==="backtest"&&!btResult&&hists[focus]?.length>50){
-              setBtRunning(true);
-              setTimeout(()=>{
-                const r=runBacktest(hists[focus],risk);
-                setBtResult(r);setBtRunning(false);
-              },100);
-            }
-            if(tab==="rejim"){
-              const fh=hists[focus]||[];
-              if(fh.length>50){setRegime(detectRegime(fh));setMtf(multiTimeframeSignal(fh));}
-            }
-          }} style={{padding:"5px 14px",borderRadius:6,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",
-            background:activeTab===tab?"#0d1f42":"#080e24",
-            border:`1px solid ${activeTab===tab?"#2a5a9e":"#1a2a5e"}`,
-            color:activeTab===tab?"#fff":"#4a6fa5"
-          }}>{label}</button>
-        ))}
-        {btResult&&activeTab==="backtest"&&<button onClick={()=>{
-          setBtRunning(true);setTimeout(()=>{const r=runBacktest(hists[focus],risk);setBtResult(r);setBtRunning(false);},100);
-        }} style={{padding:"5px 10px",borderRadius:6,fontSize:9,cursor:"pointer",fontFamily:"inherit",background:"#0a1228",border:"1px solid #1a2a5e",color:"#4a6fa5",marginLeft:"auto"}}>🔄 Yenile</button>}
+            </div>;
+          })}
       </div>
-      {activeTab==="backtest"&&(
-        <div>
-          {btRunning?(
-            <div style={{textAlign:"center",paddingTop:60}}>
-              <div style={{width:32,height:32,border:"3px solid #38bdf8",borderTop:"3px solid transparent",borderRadius:"50%",animation:"spin 1s linear infinite",margin:"0 auto 16px"}}/>
-              <div style={{color:"#38bdf8",fontSize:12}}>7 günlük veri üzerinde backtest çalışıyor...</div>
-            </div>
-          ):!btResult?(
-            <div style={{textAlign:"center",paddingTop:60}}>
-              <div style={{fontSize:40,marginBottom:12}}>📈</div>
-              <div style={{color:"#4a6fa5",fontSize:12,marginBottom:16}}>Sol panelden bir coin seçip buraya tıklayın</div>
-              <button onClick={()=>{if(hists[focus]?.length>50){setBtRunning(true);setTimeout(()=>{setBtResult(runBacktest(hists[focus],risk));setBtRunning(false);},100);}}} style={{padding:"10px 24px",background:"#14532d",border:"1px solid #22c55e",borderRadius:8,color:"#22c55e",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>▶ Backtest Başlat ({focus.replace("USDT","")})</button>
-            </div>
-          ):(()=>{
-            const R=btResult;
-            const eqData=R.equity;
-            const W=460,H=80;
-            const mn=Math.min(...eqData),mx=Math.max(...eqData),rng=mx-mn||1;
-            const pts=eqData.map((v,i)=>`${i/(eqData.length-1)*W},${H-((v-mn)/rng)*(H-4)-2}`).join(" ");
-            const eqColor=R.totalReturn>=0?"#22c55e":"#ef4444";
-            const uid="bteq";
-            return<div>
-              {/* Özet kartlar */}
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:14}}>
-                {[
-                  ["Toplam Getiri",(R.totalReturn>=0?"+":"")+R.totalReturn.toFixed(2)+"%",R.totalReturn>=0?"#22c55e":"#ef4444"],
-                  ["Win Rate",R.winRate+"%",R.winRate>=50?"#22c55e":"#f59e0b"],
-                  ["İşlem Sayısı",R.tradeCount,"#94a3b8"],
-                  ["Max Drawdown",R.maxDrawdown.toFixed(1)+"%","#ef4444"],
-                ].map(([l,v,c])=>(
-                  <div key={l} style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
-                    <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>{l}</div>
-                    <div style={{fontSize:16,fontWeight:700,color:c}}>{v}</div>
-                  </div>
-                ))}
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
-                {[
-                  ["Başlangıç","$10,000","#94a3b8"],
-                  ["Final Değer","$"+R.finalVal.toFixed(2),R.finalVal>=10000?"#22c55e":"#ef4444"],
-                  ["Net Kâr/Zarar",(R.totalPnl>=0?"+":"")+"$"+R.totalPnl.toFixed(2),R.totalPnl>=0?"#22c55e":"#ef4444"],
-                  ["Kazanan",R.winCount+" işlem","#22c55e"],
-                  ["Kaybeden",R.lossCount+" işlem","#ef4444"],
-                  ["Ortalama/İşlem",R.tradeCount>0?"$"+(R.totalPnl/R.tradeCount).toFixed(2):"—",R.totalPnl>=0?"#22c55e":"#ef4444"],
-                ].map(([l,v,c])=>(
-                  <div key={l} style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:6,padding:"6px 8px"}}>
-                    <div style={{fontSize:8,color:"#2a4070",marginBottom:2}}>{l}</div>
-                    <div style={{fontWeight:700,color:c,fontSize:12}}>{v}</div>
-                  </div>
-                ))}
-              </div>
-              {/* Equity curve */}
-              <Box style={{marginBottom:12}}>
-                <Lbl c={"EQUİTY CURVESİ — "+focus.replace("USDT","")+" (7 GÜN)"}/>
-                <svg width={W} height={H} style={{display:"block"}}>
-                  <defs><linearGradient id={uid} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={eqColor} stopOpacity=".15"/><stop offset="100%" stopColor={eqColor} stopOpacity="0"/></linearGradient></defs>
-                  <line x1={0} y1={H-((10000-mn)/rng)*(H-4)-2} x2={W} y2={H-((10000-mn)/rng)*(H-4)-2} stroke="#1a2a5e" strokeWidth="1" strokeDasharray="4,4"/>
-                  <polygon points={`${pts} ${W},${H} 0,${H}`} fill={`url(#${uid})`}/>
-                  <polyline points={pts} fill="none" stroke={eqColor} strokeWidth="2" strokeLinejoin="round"/>
-                </svg>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4070",marginTop:4}}>
-                  <span>7 gün önce: $10,000</span>
-                  <span style={{color:eqColor}}>Bugün: ${R.finalVal.toFixed(0)}</span>
+
+      {/* Orta — analiz / backtest / rejim */}
+      <div style={{padding:14,overflowY:"auto"}}>
+
+        {/* Sekmeler */}
+        <div style={{display:"flex",gap:6,marginBottom:12}}>
+          {[["analiz","🔬 ANALİZ"],["backtest","📈 BACKTEST"],["rejim","🌡 REJİM + MTF"]].map(([t,lbl])=>(
+            <button key={t} onClick={()=>{setTab(t);if(t==="backtest"&&!btResult)startBacktest();}} style={{padding:"5px 14px",borderRadius:6,fontSize:10,fontWeight:700,background:tab===t?"#0d1f42":"#080e24",border:`1px solid ${tab===t?"#2a5a9e":"#1a2a5e"}`,color:tab===t?"#fff":"#4a6fa5"}}>{lbl}</button>
+          ))}
+          {tab==="backtest"&&btResult&&<button onClick={startBacktest} style={{padding:"5px 10px",borderRadius:6,fontSize:9,background:"#0a1228",border:"1px solid #1a2a5e",color:"#4a6fa5",marginLeft:"auto"}}>🔄 Yenile</button>}
+        </div>
+
+        {/* BACKTEST sekmesi */}
+        {tab==="backtest"&&(
+          btRunning
+            ?<div style={{textAlign:"center",paddingTop:60}}><div style={{width:32,height:32,border:"3px solid #38bdf8",borderTop:"3px solid transparent",borderRadius:"50%",animation:"spin 1s linear infinite",margin:"0 auto 16px"}}/><div style={{color:"#38bdf8",fontSize:12}}>7 günlük geçmiş üzerinde backtest çalışıyor...</div></div>
+            :!btResult
+              ?<div style={{textAlign:"center",paddingTop:60}}><div style={{fontSize:40,marginBottom:12}}>📈</div><button onClick={startBacktest} style={{padding:"10px 24px",background:"#14532d",border:"1px solid #22c55e",borderRadius:8,color:"#22c55e",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>▶ Backtest Başlat — {focus.replace("USDT","")}</button></div>
+              :<div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                  {[["Toplam Getiri",(btResult.totalReturn>=0?"+":"")+btResult.totalReturn.toFixed(2)+"%",btResult.totalReturn>=0?"#22c55e":"#ef4444"],["Win Rate",btResult.winRate+"%",btResult.winRate>=50?"#22c55e":"#f59e0b"],["İşlem",btResult.tradeCount,"#94a3b8"],["Max Drawdown",btResult.maxDrawdown.toFixed(1)+"%","#ef4444"]].map(([l,v,c])=>(
+                    <div key={l} style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:8,padding:"8px 10px",textAlign:"center"}}><div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>{l}</div><div style={{fontSize:16,fontWeight:700,color:c}}>{v}</div></div>
+                  ))}
                 </div>
-              </Box>
-              {/* Son işlemler */}
-              <Box>
-                <Lbl c="SON BACKTEST İŞLEMLERİ"/>
-                {R.trades.slice(-8).reverse().map((t,i)=>(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                  {[["Başlangıç","$10,000","#94a3b8"],["Final","$"+btResult.finalVal.toFixed(2),btResult.finalVal>=10000?"#22c55e":"#ef4444"],["Net Kâr",(btResult.totalPnl>=0?"+":"")+"$"+btResult.totalPnl.toFixed(2),btResult.totalPnl>=0?"#22c55e":"#ef4444"],["Kazanan",btResult.winCount+" işlem","#22c55e"],["Kaybeden",btResult.lossCount+" işlem","#ef4444"],["Ort/İşlem",btResult.tradeCount>0?"$"+(btResult.totalPnl/btResult.tradeCount).toFixed(2):"—",btResult.totalPnl>=0?"#22c55e":"#ef4444"]].map(([l,v,c])=>(
+                    <MiniCard key={l} l={l} v={v} c={c}/>
+                  ))}
+                </div>
+                <Box ch={<div><Lbl t={"EQUİTY CURVESİ — "+focus.replace("USDT","")+" (7 GÜN)"}/><EqChart data={btResult.equity}/><div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4070",marginTop:4}}><span>7 gün önce: $10,000</span><span style={{color:btResult.finalVal>=10000?"#22c55e":"#ef4444"}}>Bugün: ${btResult.finalVal.toFixed(0)}</span></div></div>} s={{marginBottom:12}}/>
+                <Box ch={<div><Lbl t="SON BACKTEST İŞLEMLERİ"/>{btResult.trades.slice(-8).reverse().map((t,i)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:3,borderLeft:`2px solid ${t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444"}`}}>
                     <span style={{color:t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444",fontSize:10,fontWeight:700}}>{t.action==="AL"?"↑ AL":"↓ SAT"}</span>
-                    <span style={{color:"#4a6fa5",fontSize:9}}>${t.price>100?t.price.toFixed(2):t.price.toFixed(4)}</span>
+                    <span style={{color:"#4a6fa5",fontSize:9}}>${fp(t.price)}</span>
                     {t.gain!=null&&<span style={{color:t.gain>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:9}}>{t.gain>=0?"+":""}${t.gain.toFixed(2)}</span>}
                     {t.reason&&<span style={{color:"#2a4070",fontSize:8}}>{t.reason}</span>}
                   </div>
-                ))}
-              </Box>
-              <div style={{marginTop:10,fontSize:9,color:"#1a3060",padding:"6px 10px",background:"#050810",borderRadius:6}}>
-                ⚠️ Geçmiş performans gelecek sonuçları garanti etmez. Backtest gerçek spread, komisyon ve slippage içermez.
+                ))}</div>}/>
+                <div style={{marginTop:10,fontSize:9,color:"#1a3060",padding:"6px 10px",background:"#050810",borderRadius:6}}>⚠️ Geçmiş performans gelecek sonuçları garanti etmez. Backtest spread/komisyon içermez.</div>
               </div>
-            </div>;
-          })()}
-        </div>
-      )}
+        )}
 
-      {activeTab==="rejim"&&(
-        <div>
-          {!regime?(
-            <div style={{textAlign:"center",paddingTop:60,color:"#1a3060"}}>
-              <div style={{fontSize:36,marginBottom:10}}>🌡</div>
-              <div>Sol panelden coin seçin</div>
-            </div>
-          ):(()=>{
-            const R=regime,M=mtf||{};
-            const regimeColors={bull:"#22c55e",bear:"#ef4444",range:"#38bdf8",volatile:"#ef4444",squeeze:"#f59e0b",unknown:"#6b7280"};
-            const rc=regimeColors[R.type]||"#6b7280";
-            return<div>
-              {/* Rejim kartı */}
-              <Box style={{marginBottom:12,borderColor:rc+"44",background:rc+"08"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div>
-                    <div style={{fontSize:9,color:"#2a4070",marginBottom:4}}>PIYASA REJİMİ — {focus.replace("USDT","")}</div>
-                    <div style={{fontSize:24,fontWeight:700,color:rc}}>{R.label}</div>
-                    <div style={{fontSize:11,color:"#6a8ab0",marginTop:4}}>{R.desc}</div>
-                  </div>
-                  <div style={{fontSize:48}}>{R.type==="bull"?"🐂":R.type==="bear"?"🐻":R.type==="squeeze"?"🗜️":R.type==="volatile"?"⚡":"↔️"}</div>
+        {/* REJİM + MTF sekmesi */}
+        {tab==="rejim"&&(()=>{
+          const fh=hists[focus]||[];
+          if(fh.length<50)return <div style={{textAlign:"center",paddingTop:60,color:"#1a3060"}}><div style={{fontSize:36,marginBottom:10}}>🌡</div><div>Veri yükleniyor...</div></div>;
+          const R=detectRegime(fh),M=mtfAnalysis(fh);
+          const price=prices[focus]?.price;
+          const DL=price?dynLevels(price,fh,risk):null;
+          const rc=R.color;
+          return <div>
+            {/* Rejim kartı */}
+            <div style={{background:rc+"08",border:`1px solid ${rc}44`,borderRadius:8,padding:12,marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:9,color:"#2a4070",marginBottom:4}}>PİYASA REJİMİ — {focus.replace("USDT","")}</div>
+                  <div style={{fontSize:24,fontWeight:700,color:rc}}>{R.label}</div>
+                  <div style={{fontSize:11,color:"#6a8ab0",marginTop:4}}>{R.desc}</div>
                 </div>
-                <div style={{marginTop:10,padding:"8px",background:"#050d20",borderRadius:6,fontSize:10,color:rc===""#22c55e""?"#22c55e":"#6a8ab0"}}>
-                  {R.type==="bull"&&"✅ Yükseliş trendinde AL sinyalleri daha güvenilir. SAT sinyallerini filtrele."}
-                  {R.type==="bear"&&"🔴 Düşüş trendinde SAT sinyalleri daha güvenilir. AL sinyallerini filtrele."}
-                  {R.type==="range"&&"↔️ Yatay piyasada RSI+BB stratejisi çalışır. EMA sinyallerini filtrele."}
-                  {R.type==="squeeze"&&"⚠️ Bollinger sıkışması! Büyük hareket yaklaşıyor. Yön belirsiz, bekle."}
-                  {R.type==="volatile"&&"⚡ Aşırı volatilite! Stop-loss'ları geniş tut veya bekle."}
-                </div>
-              </Box>
-
-              {/* Multi-Timeframe */}
-              <Box style={{marginBottom:12}}>
-                <Lbl c="MULTI-TIMEFRAME ANALİZİ"/>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-                  {[["1 Saatlik",M.tf1h,M.rsi1h],["4 Saatlik",M.tf4h,M.rsi4h],["Günlük",M.tf1d,M.rsi1d]].map(([tf,dir,r])=>{
-                    const c=dir==="AL"?"#22c55e":dir==="SAT"?"#ef4444":"#6b7280";
-                    return<div key={tf} style={{background:"#050d20",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
-                      <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>{tf}</div>
-                      <div style={{fontSize:14,fontWeight:700,color:c}}>{dir||"—"}</div>
-                      <div style={{fontSize:9,color:"#4a6fa5",marginTop:2}}>RSI: {r?.toFixed(0)||"—"}</div>
-                    </div>;
-                  })}
-                </div>
-                <div style={{background:"#050d20",borderRadius:6,padding:"10px 12px",textAlign:"center"}}>
-                  <div style={{fontSize:9,color:"#2a4070",marginBottom:4}}>HIZALAMA</div>
-                  <div style={{fontSize:16,fontWeight:700,color:M.alignment>0?"#22c55e":M.alignment<0?"#ef4444":"#f59e0b"}}>{M.label||"—"}</div>
-                  <div style={{fontSize:9,color:"#4a6fa5",marginTop:4}}>
-                    {M.alignment===3&&"Tüm zaman dilimleri AL — güçlü sinyal ✅"}
-                    {M.alignment===-3&&"Tüm zaman dilimleri SAT — güçlü sinyal 🔴"}
-                    {M.alignment===1&&"Çoğunluk AL — orta sinyal"}
-                    {M.alignment===-1&&"Çoğunluk SAT — orta sinyal"}
-                    {M.alignment===0&&"Karışık sinyaller — beklemek mantıklı"}
-                  </div>
-                </div>
-              </Box>
-
-              {/* Dinamik SL/TP */}
-              {(()=>{
-                const fh=hists[focus]||[];
-                if(fh.length<20) return null;
-                const price=prices[focus]?.price;if(!price)return null;
-                const D=calcDynamicLevels(price,fh,risk);
-                return<Box>
-                  <Lbl c={"DİNAMİK STOP-LOSS / TAKE-PROFIT (ATR Bazlı) — "+risk.toUpperCase()}/>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                    {[
-                      ["ATR(14)",D.atr>1?D.atr.toFixed(2):D.atr.toFixed(5),"#94a3b8"],
-                      ["ATR %",D.atrPct.toFixed(2)+"%","#f59e0b"],
-                      ["Volatilite",D.atrPct>3?"Yüksek":D.atrPct>1?"Normal":"Düşük",D.atrPct>3?"#ef4444":D.atrPct>1?"#f59e0b":"#22c55e"],
-                      ["Stop-Loss","$"+fp(D.stopLoss)+" (−"+D.slPct.toFixed(2)+"%)","#ef4444"],
-                      ["Take-Profit","$"+fp(D.takeProfit)+" (+"+D.tpPct.toFixed(2)+"%)","#22c55e"],
-                      ["Risk/Ödül","1 : "+(D.tpPct/D.slPct).toFixed(1),"#38bdf8"],
-                    ].map(([l,v,c])=>(
-                      <div key={l} style={{background:"#050d20",borderRadius:5,padding:"6px 8px"}}>
-                        <div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div>
-                        <div style={{fontWeight:700,color:c,fontSize:11}}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{marginTop:8,fontSize:9,color:"#2a4070",padding:"5px 8px",background:"#050d20",borderRadius:4}}>
-                    💡 Bot yeni pozisyon açarken bu ATR bazlı seviyeleri otomatik kullanır.
-                  </div>
-                </Box>;
-              })()}
-            </div>;
-          })()}
-        </div>
-      )}
-
-      {activeTab==="analiz"&&(
-        <div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-            <div>
-              <div style={{fontSize:22,fontWeight:700,color:"#fff"}}>{focus.replace("USDT","")}<span style={{color:"#2a4070",fontSize:13}}>/USD</span></div>
-              <div style={{color:"#4a6fa5",fontSize:10}}>{BY_PAIR[focus]?.name}</div>
-              <div style={{fontSize:26,color:"#f0b90b",fontWeight:700,marginTop:3}}>${fp(fPrice.price)}</div>
-              <div style={{fontSize:10,marginTop:3}}>
-                <span style={{color:(fPrice.chg||0)>=0?"#22c55e":"#ef4444",fontWeight:700}}>{(fPrice.chg>=0?"+":"")+((fPrice.chg)||0).toFixed(3)}%</span>
-                <span style={{color:"#2a4070",marginLeft:10}}>H: ${fp(fPrice.high||0)}</span>
-                <span style={{color:"#2a4070",marginLeft:8}}>L: ${fp(fPrice.low||0)}</span>
+                <div style={{fontSize:44}}>{R.type==="bull"?"🐂":R.type==="bear"?"🐻":R.type==="squeeze"?"🗜️":R.type==="volatile"?"⚡":"↔️"}</div>
               </div>
             </div>
-            <div style={{textAlign:"center"}}>
-              <Gauge v={fSig.conf||0} action={fSig.action}/>
-              <div style={{marginTop:5,padding:"7px 16px",borderRadius:8,background:(AC[fSig.action]||"#6b7280")+"18",border:`1px solid ${(AC[fSig.action]||"#6b7280")}44`,color:AC[fSig.action]||"#6b7280",fontWeight:700,fontSize:14}}>
-                {fSig.action==="AL"?"🟢 AL SİNYALİ":fSig.action==="SAT"?"🔴 SAT SİNYALİ":"⏸ BEKLE"}
-              </div>
-              <div style={{fontSize:9,color:"#2a4070",marginTop:4}}>REJİM: <span style={{color:"#94a3b8"}}>{fSig.regime}</span> · SKOR: <span style={{color:"#f59e0b",fontWeight:700}}>{fSig.score>0?"+":""}{fSig.score}</span></div>
-            </div>
-          </div>
 
-          <Box style={{marginBottom:10}}>
-            <Lbl c="AI SEÇİLEN STRATEJİ"/>
-            <div style={{color:"#38bdf8",fontWeight:700}}>🤖 {fSig.strat}</div>
-            <div style={{fontSize:9,color:"#2a4070",marginTop:3}}>
-              ✅ Proxy canlı · 📊 7G geçmiş · {fHist.length} veri · Hacim+Diverg+Fib aktif
-            </div>
-          </Box>
-
-          {fPos&&(()=>{const cur=fPrice.price,upnl=fPos.qty*cur-fPos.inv,pct=(upnl/fPos.inv)*100;return<div style={{background:upnl>=0?"#021008":"#120305",border:`1px solid ${upnl>=0?"#22c55e33":"#ef444433"}`,borderRadius:8,padding:10,marginBottom:10}}><Lbl c="AKTİF POZİSYON"/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{[["Giriş","$"+fp(fPos.entry),""],["Stop","$"+fp(fPos.sl),"#ef4444"],["Hedef","$"+fp(fPos.tp),"#22c55e"],["Miktar",fPos.qty.toFixed(6),""],["Yatırım","$"+fPos.inv.toFixed(2),""],["G/Z",(upnl>=0?"+":"")+"$"+upnl.toFixed(2)+" ("+pct.toFixed(2)+"%)",upnl>=0?"#22c55e":"#ef4444"]].map(([l,v,c])=><div key={l} style={{background:"#050d20",borderRadius:5,padding:"5px 7px"}}><div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div><div style={{fontWeight:700,color:c||"#94a3b8",fontSize:11}}>{v}</div></div>)}</div></div>;})()}
-
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-            <Box><Lbl c="RSI & STOCH RSI"/>{[[fSig.ind.r,"RSI(14)",35,65],[fSig.ind.sr.k,"StochRSI K",25,75]].map(([v,l,lo,hi])=>{const c=v<lo?"#22c55e":v>hi?"#ef4444":"#f59e0b";return<div key={l} style={{marginBottom:7}}><div style={{display:"flex",justifyContent:"space-between",fontSize:9,marginBottom:2}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c,fontWeight:700}}>{v.toFixed(1)}</span></div><div style={{background:"#0a1535",borderRadius:3,height:5}}><div style={{width:v+"%",height:"100%",background:c,borderRadius:3,transition:"width .3s"}}/></div></div>;})}
-            </Box>
-            <Box><Lbl c="MACD (12,26,9)"/><Row l="MACD" v={fSig.ind.m.line.toFixed(5)}/><Row l="Sinyal" v={fSig.ind.m.sig.toFixed(5)}/><Row l="Histogram" v={fSig.ind.m.hist.toFixed(5)} c={fSig.ind.m.hist>=0?"#22c55e":"#ef4444"}/></Box>
-            <Box><Lbl c="BOLLINGER BANTLARI"/><Row l="Üst" v={"$"+fp(fSig.ind.b.u)} c="#ef4444"/><Row l="Orta (MA20)" v={"$"+fp(fSig.ind.b.m)} c="#f59e0b"/><Row l="Alt" v={"$"+fp(fSig.ind.b.l)} c="#22c55e"/><div style={{fontSize:8,color:"#2a4070"}}>Genişlik: <span style={{color:fSig.ind.bw>4?"#ef4444":"#f59e0b"}}>{fSig.ind.bw.toFixed(2)}%</span></div></Box>
-            <Box><Lbl c="EMA (9/21/50)"/><Row l="EMA 9" v={"$"+fp(fSig.ind.e9)} c="#38bdf8"/><Row l="EMA 21" v={"$"+fp(fSig.ind.e21)} c="#38bdf8"/><Row l="EMA 50" v={"$"+fp(fSig.ind.e50)} c="#38bdf8"/><div style={{fontSize:8,color:fSig.ind.slope>=0?"#22c55e":"#ef4444"}}>Eğim: {fSig.ind.slope>=0?"▲":"▼"}{Math.abs(fSig.ind.slope).toFixed(4)}%</div></Box>
-            <Box style={{gridColumn:"1/-1"}}><Lbl c="OSİLATÖRLER"/><div style={{display:"flex",gap:24}}>{[["CCI(20)",fSig.ind.c.toFixed(1),fSig.ind.c<-100?"#22c55e":fSig.ind.c>100?"#ef4444":"#f59e0b"],["Toplam Veri",fHist.length,"#94a3b8"],["Fiyat/sn",pps,"#38bdf8"],["BB Genişliği",fSig.ind.bw.toFixed(2)+"%",fSig.ind.bw>4?"#ef4444":"#f59e0b"]].map(([l,v,c])=><div key={l}><div style={{fontSize:8,color:"#2a4070"}}>{l}</div><div style={{color:c,fontWeight:700,fontSize:13}}>{v}</div></div>)}</div></Box>
-          </div>
-
-          {/* ── Öncü Sinyal Paneli ── */}
-          {fSig.leading&&(()=>{
-            const L=fSig.leading;
-            return<Box style={{marginBottom:10}}>
-              <Lbl c="ÖNCü SİNYAL ANALİZİ"/>
+            {/* MTF */}
+            <Box ch={<div>
+              <Lbl t="MULTI-TIMEFRAME ANALİZİ (1s / 4s / Günlük)"/>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-                {/* Hacim */}
-                <div style={{background:"#050d20",borderRadius:6,padding:"8px 10px"}}>
-                  <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>📦 HACİM ANALİZİ</div>
-                  <div style={{fontSize:13,fontWeight:700,color:L.accumulation?"#22c55e":L.distribution?"#ef4444":"#94a3b8"}}>
-                    {L.accumulation?"BİRİKİM":L.distribution?"DAĞITIM":"NÖTR"}
-                  </div>
-                  <div style={{fontSize:9,color:"#4a6fa5",marginTop:3}}>Spike: <span style={{color:L.volSpike>2?"#f59e0b":"#94a3b8",fontWeight:700}}>×{L.volSpike.toFixed(1)}</span></div>
-                  {L.volSpike>1.5&&<div style={{fontSize:8,color:"#2a4070",marginTop:2}}>{L.volSpike>2?"⚠️ Güçlü hareket yaklaşıyor":"Hafif aktivite"}</div>}
-                </div>
-                {/* RSI Divergence */}
-                <div style={{background:"#050d20",borderRadius:6,padding:"8px 10px"}}>
-                  <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>🔀 RSI DIVERGENCE</div>
-                  <div style={{fontSize:13,fontWeight:700,color:L.bullDiv?"#22c55e":L.bearDiv?"#ef4444":"#94a3b8"}}>
-                    {L.bullDiv?"BULLISH 🟢":L.bearDiv?"BEARISH 🔴":"YOK"}
-                  </div>
-                  <div style={{fontSize:8,color:"#2a4070",marginTop:3}}>
-                    {L.bullDiv?"Fiyat dip → RSI toparlanıyor":L.bearDiv?"Fiyat zirve → RSI zayıflıyor":"Uyumsuzluk tespit edilmedi"}
-                  </div>
-                </div>
-                {/* Fibonacci */}
-                <div style={{background:"#050d20",borderRadius:6,padding:"8px 10px"}}>
-                  <div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>📐 FİBONACCİ</div>
-                  <div style={{fontSize:11,fontWeight:700,color:L.atFibSupport?"#22c55e":L.atFibResistance?"#ef4444":"#94a3b8"}}>
-                    {L.atFibSupport?"DESTEK ✓":L.atFibResistance?"DİRENÇ ✗":"—"}
-                  </div>
-                  <div style={{fontSize:9,color:"#f59e0b",marginTop:2,fontWeight:700}}>{L.nearFib.label}</div>
-                  <div style={{fontSize:8,color:"#2a4070"}}>±{L.nearFib.d.toFixed(2)}% uzaklık</div>
+                {[["1 Saatlik",M.h1,M.r1h],["4 Saatlik",M.h4,M.r4h],["Günlük",M.d1,M.r1d]].map(([tf,dir,r])=>{
+                  const c=dir==="AL"?"#22c55e":dir==="SAT"?"#ef4444":"#6b7280";
+                  return <div key={tf} style={{background:"#050d20",borderRadius:6,padding:"8px 10px",textAlign:"center"}}><div style={{fontSize:8,color:"#2a4070",marginBottom:4}}>{tf}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{dir}</div><div style={{fontSize:9,color:"#4a6fa5",marginTop:2}}>RSI: {r?.toFixed(0)||"—"}</div></div>;
+                })}
+              </div>
+              <div style={{background:"#050d20",borderRadius:6,padding:"10px 12px",textAlign:"center"}}>
+                <div style={{fontSize:9,color:"#2a4070",marginBottom:4}}>HIZALAMA</div>
+                <div style={{fontSize:16,fontWeight:700,color:M.align>0?"#22c55e":M.align<0?"#ef4444":"#f59e0b"}}>{M.label}</div>
+                <div style={{fontSize:9,color:"#4a6fa5",marginTop:4}}>
+                  {M.align===3&&"Tüm zaman dilimleri AL — çok güçlü sinyal ✅"}
+                  {M.align===-3&&"Tüm zaman dilimleri SAT — çok güçlü sinyal 🔴"}
+                  {(M.align===1||M.align===-1)&&"Çoğunluk sinyali — orta güven"}
+                  {M.align===0&&"Karışık — beklemek mantıklı"}
                 </div>
               </div>
-              {/* Fibonacci seviyeleri */}
-              <div style={{background:"#050d20",borderRadius:6,padding:"8px 10px"}}>
-                <div style={{fontSize:8,color:"#2a4070",marginBottom:6}}>FİBONACCİ SEVİYELERİ (50 mum)</div>
-                <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                  {L.fibs.map((f,i)=>{
-                    const pct=Math.abs(fPrice.price-f)/fPrice.price*100;
-                    const isNear=pct<0.8;
-                    const isAbove=fPrice.price>f;
-                    return<div key={i} style={{display:"flex",alignItems:"center",gap:6}}>
-                      <span style={{fontSize:9,color:"#4a6fa5",width:60}}>{L.fibLabels[i]}</span>
-                      <div style={{flex:1,height:3,background:"#0a1535",borderRadius:2,position:"relative"}}>
-                        <div style={{position:"absolute",left:0,width:"100%",height:"100%",background:isNear?"#f59e0b22":"transparent",borderRadius:2}}/>
-                        {isNear&&<div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",width:6,height:6,borderRadius:"50%",background:"#f59e0b",top:-1.5}}/>}
-                      </div>
-                      <span style={{fontSize:9,color:isNear?"#f59e0b":isAbove?"#22c55e44":"#ef444444",fontWeight:isNear?700:400,width:70,textAlign:"right"}}>${f>100?f.toFixed(2):f.toFixed(4)}</span>
-                      {isNear&&<span style={{fontSize:7,color:"#f59e0b"}}>← ŞİMDİ</span>}
-                    </div>;
-                  })}
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#1a3060",marginTop:6}}>
-                  <span>Dip: ${L.fibLow>100?L.fibLow.toFixed(2):L.fibLow.toFixed(4)}</span>
-                  <span>Zirve: ${L.fibHigh>100?L.fibHigh.toFixed(2):L.fibHigh.toFixed(4)}</span>
-                </div>
-              </div>
-            </Box>;
-          })()}
+            </div>} s={{marginBottom:12}}/>
 
-          {fSig.reasons?.length>0&&<Box><Lbl c="SİNYAL GEREKÇELERİ"/>{fSig.reasons.map((r,i)=><div key={i} style={{fontSize:11,padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:4,borderLeft:`2px solid ${AC[fSig.action]||"#2a4070"}`,color:"#94a3b8"}}>{r}</div>)}</Box>}
+            {/* Dinamik SL/TP */}
+            {DL&&<Box ch={<div>
+              <Lbl t={"DİNAMİK SL/TP — ATR Bazlı (" + risk.toUpperCase() + " risk)"}/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {[["ATR(14)",DL.at>1?DL.at.toFixed(2):DL.at.toFixed(5),"#94a3b8"],["ATR %",DL.atPct.toFixed(2)+"%","#f59e0b"],["Volatilite",DL.atPct>3?"Yüksek":DL.atPct>1?"Normal":"Düşük",DL.atPct>3?"#ef4444":DL.atPct>1?"#f59e0b":"#22c55e"],["Stop-Loss","$"+fp(DL.sl)+" (−"+DL.slPct.toFixed(2)+"%)","#ef4444"],["Take-Profit","$"+fp(DL.tp)+" (+"+DL.tpPct.toFixed(2)+"%)","#22c55e"],["Risk/Ödül","1 : "+(DL.tpPct/DL.slPct).toFixed(1),"#38bdf8"]].map(([l,v,c])=>(
+                  <MiniCard key={l} l={l} v={v} c={c}/>
+                ))}
+              </div>
+              <div style={{marginTop:8,fontSize:9,color:"#2a4070",padding:"5px 8px",background:"#050d20",borderRadius:4}}>💡 Bot yeni pozisyon açarken bu ATR bazlı seviyeleri otomatik kullanır.</div>
+            </div>}/>}
+          </div>;
+        })()}
+
+        {/* ANALİZ sekmesi */}
+        {tab==="analiz"&&(
+          fPrice.price&&fSig.ind
+            ?<div>
+              {/* Fiyat başlık */}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                <div>
+                  <div style={{fontSize:22,fontWeight:700,color:"#fff"}}>{focus.replace("USDT","")}<span style={{color:"#2a4070",fontSize:13}}>/USD</span></div>
+                  <div style={{color:"#4a6fa5",fontSize:10}}>{BY_PAIR[focus]?.name}</div>
+                  <div style={{fontSize:26,color:"#f0b90b",fontWeight:700,marginTop:3}}>${fp(fPrice.price)}</div>
+                  <div style={{fontSize:10,marginTop:3}}>
+                    <span style={{color:(fPrice.chg||0)>=0?"#22c55e":"#ef4444",fontWeight:700}}>{(fPrice.chg>=0?"+":"")+((fPrice.chg)||0).toFixed(2)}%</span>
+                    <span style={{color:"#2a4070",marginLeft:10}}>H: ${fp(fPrice.high||0)}</span>
+                    <span style={{color:"#2a4070",marginLeft:8}}>L: ${fp(fPrice.low||0)}</span>
+                  </div>
+                </div>
+                <div style={{textAlign:"center"}}>
+                  <Gauge v={fSig.conf||0} action={fSig.action}/>
+                  <div style={{marginTop:5,padding:"7px 16px",borderRadius:8,background:(AC[fSig.action]||"#6b7280")+"18",border:`1px solid ${(AC[fSig.action]||"#6b7280")}44`,color:AC[fSig.action]||"#6b7280",fontWeight:700,fontSize:14}}>
+                    {fSig.action==="AL"?"🟢 AL SİNYALİ":fSig.action==="SAT"?"🔴 SAT SİNYALİ":"⏸ BEKLE"}
+                  </div>
+                  <div style={{fontSize:9,color:"#2a4070",marginTop:4}}>REJİM: <span style={{color:"#94a3b8"}}>{fSig.regime}</span> · SKOR: <span style={{color:"#f59e0b",fontWeight:700}}>{fSig.score>0?"+":""}{fSig.score}</span></div>
+                </div>
+              </div>
+
+              {/* Strateji */}
+              <Box ch={<div><Lbl t="AI SEÇİLEN STRATEJİ"/><div style={{color:"#38bdf8",fontWeight:700}}>🤖 {fSig.strat}</div><div style={{fontSize:9,color:"#2a4070",marginTop:3}}>{fHist.length} veri · Hacim + Divergence + Fibonacci aktif</div></div>} s={{marginBottom:10}}/>
+
+              {/* Açık pozisyon */}
+              {fPos&&<div style={{background:((fPos.qty*(fPrice.price||fPos.entry)-fPos.inv)>=0)?"#021008":"#120305",border:`1px solid ${((fPos.qty*(fPrice.price||fPos.entry)-fPos.inv)>=0)?"#22c55e33":"#ef444433"}`,borderRadius:8,padding:10,marginBottom:10}}>
+                <Lbl t="AKTİF POZİSYON"/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                  {(()=>{const upnl=fPos.qty*(fPrice.price||fPos.entry)-fPos.inv,pct=(upnl/fPos.inv)*100;
+                  return[["Giriş","$"+fp(fPos.entry),""],["Stop","$"+fp(fPos.sl),"#ef4444"],["Hedef","$"+fp(fPos.tp),"#22c55e"],["Miktar",fPos.qty.toFixed(6),""],["Yatırım","$"+fPos.inv.toFixed(2),""],["G/Z",(upnl>=0?"+":"")+"$"+upnl.toFixed(2)+" ("+pct.toFixed(2)+"%)",upnl>=0?"#22c55e":"#ef4444"]].map(([l,v,c])=>(
+                    <MiniCard key={l} l={l} v={v} c={c}/>
+                  ));})()}
+                </div>
+              </div>}
+
+              {/* Göstergeler grid */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                <Box ch={<div><Lbl t="RSI & STOCH RSI"/>{[[fSig.ind.r,"RSI(14)",35,65],[fSig.ind.sr.k,"StochRSI K",25,75]].map(([v,l,lo,hi])=>{const c=v<lo?"#22c55e":v>hi?"#ef4444":"#f59e0b";return <div key={l} style={{marginBottom:7}}><div style={{display:"flex",justifyContent:"space-between",fontSize:9,marginBottom:2}}><span style={{color:"#4a6fa5"}}>{l}</span><span style={{color:c,fontWeight:700}}>{v.toFixed(1)}</span></div><div style={{background:"#0a1535",borderRadius:3,height:5}}><div style={{width:v+"%",height:"100%",background:c,borderRadius:3,transition:"width .3s"}}/></div></div>;})}</div>}/>
+                <Box ch={<div><Lbl t="MACD (12,26,9)"/><Row l="MACD" v={fSig.ind.m.line.toFixed(5)}/><Row l="Sinyal" v={fSig.ind.m.sig.toFixed(5)}/><Row l="Histogram" v={fSig.ind.m.hist.toFixed(5)} c={fSig.ind.m.hist>=0?"#22c55e":"#ef4444"}/></div>}/>
+                <Box ch={<div><Lbl t="BOLLINGER BANTLARI"/><Row l="Üst" v={"$"+fp(fSig.ind.b.u)} c="#ef4444"/><Row l="Orta" v={"$"+fp(fSig.ind.b.m)} c="#f59e0b"/><Row l="Alt" v={"$"+fp(fSig.ind.b.l)} c="#22c55e"/><div style={{fontSize:8,color:"#2a4070"}}>Genişlik: <span style={{color:fSig.ind.bw>4?"#ef4444":"#f59e0b"}}>{fSig.ind.bw.toFixed(2)}%</span></div></div>}/>
+                <Box ch={<div><Lbl t="EMA (9/21/50)"/><Row l="EMA 9" v={"$"+fp(fSig.ind.e9)} c="#38bdf8"/><Row l="EMA 21" v={"$"+fp(fSig.ind.e21)} c="#38bdf8"/><Row l="EMA 50" v={"$"+fp(fSig.ind.e50)} c="#38bdf8"/><div style={{fontSize:8,color:fSig.ind.slope>=0?"#22c55e":"#ef4444"}}>Eğim: {fSig.ind.slope>=0?"▲":"▼"}{Math.abs(fSig.ind.slope).toFixed(3)}%</div></div>}/>
+
+                {/* Öncü sinyaller */}
+                {fSig.lead&&<Box ch={<div>
+                  <Lbl t="ÖNCü SİNYALLER"/>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                    <div style={{background:"#050d20",borderRadius:5,padding:"6px 8px",textAlign:"center"}}>
+                      <div style={{fontSize:7,color:"#2a4070",marginBottom:3}}>HACİM</div>
+                      <div style={{fontSize:11,fontWeight:700,color:fSig.lead.accum?"#22c55e":fSig.lead.distrib?"#ef4444":"#6b7280"}}>{fSig.lead.accum?"BİRİKİM":fSig.lead.distrib?"DAĞITIM":"NÖTR"}</div>
+                      <div style={{fontSize:8,color:"#4a6fa5"}}>×{fSig.lead.vSpike.toFixed(1)}</div>
+                    </div>
+                    <div style={{background:"#050d20",borderRadius:5,padding:"6px 8px",textAlign:"center"}}>
+                      <div style={{fontSize:7,color:"#2a4070",marginBottom:3}}>RSI DIV</div>
+                      <div style={{fontSize:11,fontWeight:700,color:fSig.lead.bullDiv?"#22c55e":fSig.lead.bearDiv?"#ef4444":"#6b7280"}}>{fSig.lead.bullDiv?"BULLISH":fSig.lead.bearDiv?"BEARISH":"YOK"}</div>
+                    </div>
+                    <div style={{background:"#050d20",borderRadius:5,padding:"6px 8px",textAlign:"center"}}>
+                      <div style={{fontSize:7,color:"#2a4070",marginBottom:3}}>FİBONACCİ</div>
+                      <div style={{fontSize:10,fontWeight:700,color:fSig.lead.atFibSup?"#22c55e":fSig.lead.atFibRes?"#ef4444":"#6b7280"}}>{fSig.lead.atFibSup?"DESTEK":fSig.lead.atFibRes?"DİRENÇ":"—"}</div>
+                      <div style={{fontSize:8,color:"#f59e0b"}}>{fSig.lead.nearFib.lbl}</div>
+                    </div>
+                  </div>
+                </div>} s={{gridColumn:"1/-1"}}/>}
+              </div>
+
+              {/* Sinyal gerekçeleri */}
+              {fSig.reasons?.length>0&&<Box ch={<div><Lbl t="SİNYAL GEREKÇELERİ"/>{fSig.reasons.map((r,i)=><div key={i} style={{fontSize:11,padding:"4px 8px",background:"#050d20",borderRadius:4,marginBottom:4,borderLeft:`2px solid ${AC[fSig.action]||"#2a4070"}`,color:"#94a3b8"}}>{r}</div>)}</Box>}/>}
+            </div>
+            :<div style={{textAlign:"center",color:"#1a3060",paddingTop:60}}><div style={{fontSize:40,marginBottom:10}}>📊</div><div style={{color:stCol,fontSize:11}}>{wsStatus==="live"?"Sol panelden bir parite seçin":"Bağlantı kuruluyor..."}</div></div>
+        )}
+      </div>
+
+      {/* Sağ — performans */}
+      <div style={{borderLeft:"1px solid #1a2a5e",padding:12,display:"flex",flexDirection:"column",gap:8,overflowY:"auto"}}>
+        <div style={{fontSize:9,color:"#2a4070",letterSpacing:2}}>📊 PERFORMANS</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
+          {[["Kâr/Zarar",(pnl>=0?"+":"")+"$"+pnl.toFixed(2),pnl>=0?"#22c55e":"#ef4444"],["Win Rate",wr+"%",wr>=50?"#22c55e":"#f59e0b"],["Kazanan",stats.w,"#22c55e"],["Kaybeden",stats.l,"#ef4444"],["Açık Poz.",Object.keys(portfolio).length,"#f59e0b"],["Toplam",stats.t,"#94a3b8"]].map(([l,v,c])=>(
+            <StatCard key={l} l={l} v={v} c={c}/>
+          ))}
         </div>
-      ):<div style={{textAlign:"center",color:"#1a3060",paddingTop:60}}><div style={{fontSize:40,marginBottom:10}}>⚡</div><div style={{color:wsCol,fontSize:11}}>{wsStatus==="live"?"Sol panelden bir parite seçin":"Proxy bağlantısı kuruluyor..."}</div></div>}
-      )}
-    </div>
 
-    {/* SAĞ */}
-    <div style={{borderLeft:"1px solid #1a2a5e",padding:12,display:"flex",flexDirection:"column",gap:8,overflowY:"auto"}}>
-      <div style={{fontSize:9,color:"#2a4070",letterSpacing:2}}>📊 PERFORMANS</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
-        {[["Kâr/Zarar",(pnl>=0?"+":"")+"$"+pnl.toFixed(2),pnl>=0?"#22c55e":"#ef4444"],["Win Rate",wr+"%",wr>=50?"#22c55e":"#f59e0b"],["Kazanan",stats.w,"#22c55e"],["Kaybeden",stats.l,"#ef4444"],["Açık Poz.",Object.keys(portfolio).length,"#f59e0b"],["Toplam",stats.t,"#94a3b8"]].map(([l,v,c])=>(
-          <div key={l} style={{background:"#080e24",border:"1px solid #1a2a5e",borderRadius:6,padding:"6px 8px"}}><div style={{fontSize:7,color:"#2a4070",marginBottom:2}}>{l}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{v}</div></div>
-        ))}
-      </div>
-      {Object.keys(portfolio).length>0&&<><div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>AKTİF POZİSYONLAR</div>{Object.entries(portfolio).map(([pair,pos])=>{const cur=prices[pair]?.price||pos.entry,upnl=pos.qty*cur-pos.inv;return<div key={pair} onClick={()=>setFocus(pair)} style={{background:upnl>=0?"#021008":"#120305",border:`1px solid ${upnl>=0?"#22c55e44":"#ef444444"}`,borderRadius:6,padding:"6px 8px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700,color:"#fff",fontSize:11}}>{pair.replace("USDT","")}</span><span style={{color:upnl>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:11}}>{upnl>=0?"+":""}${upnl.toFixed(2)}</span></div><div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4070",marginTop:2}}><span>SL: ${fp(pos.sl)}</span><span>TP: ${fp(pos.tp)}</span></div></div>;})}</>}
-      <div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>SON İŞLEMLER</div>
-      <div style={{flex:1,overflowY:"auto",minHeight:60}}>
-        {trades.length===0?<div style={{color:"#1a3060",textAlign:"center",padding:12,fontSize:10}}>Bot başladığında işlemler görünecek</div>
-        :trades.slice(0,50).map(t=><div key={t.id} style={{background:t.action==="AL"?"#020c08":t.gain>=0?"#020c08":"#0c0205",borderLeft:`3px solid ${t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444"}`,borderRadius:4,padding:"5px 7px",marginBottom:3}}>
-          <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700,color:t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444",fontSize:11}}>{t.action==="AL"?"↑":"↓"} {t.pair.replace("USDT","")}</span><span style={{color:"#1a3060",fontSize:8}}>{t.t}</span></div>
-          <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}><span style={{color:"#4a6fa5",fontSize:9}}>${fp(t.price)}</span>{t.gain!=null&&<span style={{color:t.gain>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:9}}>{t.gain>=0?"+":""}${t.gain.toFixed(2)}</span>}</div>
-          {t.reason&&<div style={{color:"#1a3060",fontSize:7,marginTop:1}}>{t.reason}</div>}
-        </div>)}
-      </div>
-      <div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>CANLI LOG</div>
-      <div style={{background:"#020610",border:"1px solid #1a2a5e",borderRadius:8,padding:8,height:150,overflowY:"auto"}}>
-        {logs.length===0?<div style={{color:"#1a3060",fontSize:9}}>Bekleniyor...</div>
-        :logs.map((l,i)=><div key={i} style={{marginBottom:2,fontSize:9,color:l.type==="buy"?"#22c55e":l.type==="win"?"#4ade80":l.type==="loss"?"#ef4444":l.type==="warn"?"#f59e0b":"#2a4070"}}><span style={{color:"#1a3060"}}>[{l.t}]</span> {l.msg}</div>)}
-      </div>
-      <div style={{background:"#05080f",border:"1px solid #0f1a3a",borderRadius:6,padding:7,fontSize:8,color:"#1a3060",lineHeight:1.9}}>
-        <span style={{color:"#22c55e"}}>✅ CANLI</span> Proxy polling (10s)<br/>
-        <span style={{color:"#38bdf8"}}>📊 GEÇMİŞ</span> Proxy → 7G saatlik<br/>
-        <span style={{color:"#f59e0b"}}>🛡 MOD</span> Simülasyon — gerçek para yok<br/>
-        <span style={{color:"#94a3b8"}}>🤖 AI</span> 10 gösterge · Hacim+Diverg+Fib
+        {Object.keys(portfolio).length>0&&<>
+          <div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>AKTİF POZİSYONLAR</div>
+          {Object.entries(portfolio).map(([pair,pos])=>{
+            const cur=prices[pair]?.price||pos.entry,upnl=pos.qty*cur-pos.inv;
+            return <div key={pair} onClick={()=>{setFocus(pair);setTab("analiz");}} style={{background:upnl>=0?"#021008":"#120305",border:`1px solid ${upnl>=0?"#22c55e44":"#ef444444"}`,borderRadius:6,padding:"6px 8px",cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700,color:"#fff",fontSize:11}}>{pair.replace("USDT","")}</span><span style={{color:upnl>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:11}}>{upnl>=0?"+":""}${upnl.toFixed(2)}</span></div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4070",marginTop:2}}><span>SL: ${fp(pos.sl)}</span><span>TP: ${fp(pos.tp)}</span></div>
+              {pos.atPct&&<div style={{fontSize:7,color:"#1a3060",marginTop:1}}>ATR: {pos.atPct.toFixed(2)}%</div>}
+            </div>;
+          })}
+        </>}
+
+        <div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>SON İŞLEMLER</div>
+        <div style={{flex:1,overflowY:"auto",minHeight:60}}>
+          {trades.length===0
+            ?<div style={{color:"#1a3060",textAlign:"center",padding:12,fontSize:10}}>Bot başladığında işlemler görünecek</div>
+            :trades.slice(0,50).map(t=>(
+              <div key={t.id} style={{background:t.action==="AL"?"#020c08":t.gain>=0?"#020c08":"#0c0205",borderLeft:`3px solid ${t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444"}`,borderRadius:4,padding:"5px 7px",marginBottom:3}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700,color:t.action==="AL"?"#22c55e":t.gain>=0?"#22c55e":"#ef4444",fontSize:11}}>{t.action==="AL"?"↑":"↓"} {t.pair.replace("USDT","")}</span><span style={{color:"#1a3060",fontSize:8}}>{t.t}</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}><span style={{color:"#4a6fa5",fontSize:9}}>${fp(t.price)}</span>{t.gain!=null&&<span style={{color:t.gain>=0?"#22c55e":"#ef4444",fontWeight:700,fontSize:9}}>{t.gain>=0?"+":""}${t.gain.toFixed(2)}</span>}</div>
+                {t.reason&&<div style={{color:"#1a3060",fontSize:7,marginTop:1}}>{t.reason}</div>}
+              </div>
+            ))}
+        </div>
+
+        <div style={{fontSize:9,color:"#2a4070",letterSpacing:1}}>CANLI LOG</div>
+        <div style={{background:"#020610",border:"1px solid #1a2a5e",borderRadius:8,padding:8,height:140,overflowY:"auto"}}>
+          {logs.length===0?<div style={{color:"#1a3060",fontSize:9}}>Bekleniyor...</div>
+          :logs.map((l,i)=><div key={i} style={{marginBottom:2,fontSize:9,color:l.type==="buy"?"#22c55e":l.type==="win"?"#4ade80":l.type==="loss"?"#ef4444":l.type==="warn"?"#f59e0b":"#2a4070"}}><span style={{color:"#1a3060"}}>[{l.t}]</span> {l.msg}</div>)}
+        </div>
+
+        <div style={{background:"#05080f",border:"1px solid #0f1a3a",borderRadius:6,padding:7,fontSize:8,color:"#1a3060",lineHeight:1.9}}>
+          <span style={{color:"#22c55e"}}>✅ VERİ</span> Proxy → 10s güncelleme<br/>
+          <span style={{color:"#38bdf8"}}>📊 7G</span> Saatlik geçmiş veri<br/>
+          <span style={{color:"#f59e0b"}}>🛡 MOD</span> Simülasyon<br/>
+          <span style={{color:"#94a3b8"}}>🤖 AI</span> Hacim+Diverg+Fib+ATR+MTF
+        </div>
       </div>
     </div>
-  </div>
-  </div>);
+  </div>;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
